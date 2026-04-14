@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,10 +14,23 @@ def get_places_client() -> GooglePlacesClient:
     return GooglePlacesClient()
 
 
+def allowed_origins() -> list[str]:
+    origins = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    }
+    configured = os.getenv("FRONTEND_ORIGIN", "")
+    for item in configured.split(","):
+        value = item.strip()
+        if value:
+            origins.add(value)
+    return sorted(origins)
+
+
 app = FastAPI(title="Allernav API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

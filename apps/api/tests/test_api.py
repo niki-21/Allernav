@@ -4,6 +4,7 @@ import asyncio
 import unittest
 
 from allernav_api.models import AllergyTag, LatLng, SearchRequest
+from main import allowed_origins
 from allernav_api.service import get_place_details_service, search_places_service
 
 
@@ -44,6 +45,11 @@ class FakePlacesClient:
 
 
 class ApiTests(unittest.TestCase):
+    def test_allowed_origins_include_localhost_defaults(self) -> None:
+        origins = allowed_origins()
+        self.assertIn("http://localhost:3000", origins)
+        self.assertIn("http://127.0.0.1:3000", origins)
+
     def test_search_response_shape(self) -> None:
         payload = SearchRequest(
             query="ramen",

@@ -28,7 +28,7 @@ Important:
 
 - The frontend can deploy to Vercel by itself.
 - The app will not fully work unless `NEXT_PUBLIC_API_BASE_URL` points to a publicly reachable backend.
-- The backend is currently a separate FastAPI app and should be hosted somewhere like Render or Railway.
+- The backend can also be deployed to Vercel as a second project rooted at `apps/api`.
 
 Recommended Vercel settings:
 
@@ -36,3 +36,21 @@ Recommended Vercel settings:
 - Root Directory: `apps/web`
 - Install Command: `npm install`
 - Build Command: `npm run build`
+
+## Deploying the API to Vercel
+
+Use a second Vercel project from the same GitHub repo with:
+
+- Root Directory: `apps/api`
+- Framework Preset: `Other`
+
+Add these environment variables:
+
+- `GOOGLE_MAPS_API_KEY`
+- `FRONTEND_ORIGIN`
+
+Set `FRONTEND_ORIGIN` to your deployed web URL, for example:
+
+```bash
+https://allernav.vercel.app
+```
