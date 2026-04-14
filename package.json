@@ -1,0 +1,9 @@
+{
+  "name": "allernav",
+  "private": true,
+  "scripts": {
+    "dev": "./dev.sh",
+    "start": "./dev.sh"
+  }
+}
+
