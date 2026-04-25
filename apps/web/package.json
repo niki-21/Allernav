@@ -2,12 +2,13 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types src/lib/__tests__/api.test.ts src/lib/__tests__/placeState.test.ts"
+    "test": "node --test --experimental-strip-types src/lib/__tests__/api.test.ts src/lib/__tests__/placeRanking.test.ts src/lib/__tests__/placeState.test.ts src/server/__tests__/service.test.ts src/server/__tests__/scoring.test.ts src/server/__tests__/recommendations.test.ts"
   },
   "dependencies": {
     "@react-google-maps/api": "^2.20.8",

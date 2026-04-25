@@ -1,19 +1,18 @@
-import { formatAllergenLabel } from "@/lib/allergens";
-import type { AllergyTag, PlaceDetailState, PlaceSummary } from "@/lib/types";
+"use client";
+
+import type { PlaceDetailState, PlaceSummary } from "@/lib/types";
 
 import ScoreBadge from "./ScoreBadge";
 
 interface TrustPanelProps {
   place: PlaceSummary | null;
   detailState: PlaceDetailState | undefined;
-  selectedAllergens: AllergyTag[];
   onRetry: () => void;
 }
 
 export default function TrustPanel({
   place,
   detailState,
-  selectedAllergens,
   onRetry,
 }: TrustPanelProps) {
   if (!place) {
@@ -22,8 +21,7 @@ export default function TrustPanel({
         <p className="panel-eyebrow">Trust View</p>
         <h2>Select a place to inspect its allergy evidence.</h2>
         <p>
-          Allernav reads review language, then surfaces concrete quotes that help explain whether a spot feels safer
-          or riskier for your selected profile.
+          AllerNav turns restaurant reviews into an evidence-backed brief so you can compare nearby options quickly.
         </p>
       </div>
     );
@@ -57,6 +55,15 @@ export default function TrustPanel({
   }
 
   const { data } = detailState;
+  const reviewSignalCount = data.evidence.length;
+  const signalSource =
+    reviewSignalCount > 0 && data.menu
+      ? `${reviewSignalCount} review signal${reviewSignalCount === 1 ? "" : "s"} + local menu snapshot`
+      : reviewSignalCount > 0
+        ? `${reviewSignalCount} review signal${reviewSignalCount === 1 ? "" : "s"}`
+        : data.menu
+          ? "Local menu snapshot only"
+          : "Very limited signal";
 
   return (
     <div className="trust-panel-content">
@@ -69,47 +76,70 @@ export default function TrustPanel({
         <ScoreBadge summary={data.score_summary} />
       </div>
 
-      <div className="detail-pill-row">
-        <span className="detail-pill">Profile: {selectedAllergens.map(formatAllergenLabel).join(", ")}</span>
-        <span className="detail-pill">
-          Confidence {Math.round(data.score_summary.confidence * 100)}% · {data.score_summary.evidence_count} signals
-        </span>
+      <div className="decision-brief-card">
+        <p className="detail-section-title">AI Read</p>
+        <h3 className="decision-brief-headline">{data.decision_brief.headline}</h3>
+        <p className="trust-explanation">{data.decision_brief.summary}</p>
+        <p className="panel-note">Based on {signalSource}</p>
+        <div className="action-callout">
+          <strong>Takeaway</strong>
+          <p>{data.decision_brief.recommended_action}</p>
+        </div>
+        <p className="panel-note">
+          Current confidence {Math.round(data.score_summary.evidence_confidence * 100)}% ·{" "}
+          {data.score_summary.evidence_summary}
+        </p>
       </div>
 
-      <p className="trust-explanation">{data.explanation}</p>
+      <div className="detail-action-row">
+        <a className="detail-link" href={data.google_maps_uri} target="_blank" rel="noreferrer">
+          View on Google Maps
+        </a>
+        <a className="detail-link primary" href={data.google_review_uri} target="_blank" rel="noreferrer">
+          Write on Google
+        </a>
+      </div>
 
-      {data.editorial_summary && (
+      {data.recommended_items.length > 0 && (
         <div className="detail-section">
-          <p className="detail-section-title">Place Snapshot</p>
-          <p>{data.editorial_summary}</p>
+          <p className="detail-section-title">Best Items To Verify</p>
+          <div className="menu-section-list">
+            {data.recommended_items.slice(0, 2).map((item) => (
+              <article key={`${item.section_title ?? "pick"}-${item.name}`} className="menu-card recommended">
+                <div className="menu-card-header">
+                  <strong>{item.name}</strong>
+                  <span className="signal-pill neutral">{item.source === "llm" ? "AI pick" : "Smart pick"}</span>
+                </div>
+                <p className="menu-card-body">{item.reason}</p>
+                {item.caution && item.caution.trim().length > 0 && <p className="menu-card-note">{item.caution}</p>}
+              </article>
+            ))}
+          </div>
         </div>
       )}
 
       <div className="detail-section">
-        <p className="detail-section-title">Evidence From Reviews</p>
-        <div className="evidence-list">
-          {data.evidence.map((item) => (
-            <article key={`${item.review_id}-${item.signal_type}`} className={`evidence-item ${item.impact}`}>
-              <div className="evidence-item-header">
-                <span>{item.author_name ?? "Google review"}</span>
-                <span>{item.rating ? `${item.rating.toFixed(1)}★` : "Rating unavailable"}</span>
-              </div>
-              <p className="evidence-excerpt">{item.excerpt}</p>
-              <div className="signal-list">
-                <span className={`signal-pill ${item.impact}`}>
-                  {item.impact === "positive" ? "Reassuring" : "Risk note"}
-                </span>
-                {item.matched_allergens.map((allergen) => (
-                  <span key={`${item.review_id}-${allergen}`} className="signal-pill neutral">
-                    {formatAllergenLabel(allergen)}
-                  </span>
-                ))}
-              </div>
+        <p className="detail-section-title">What Reviews Say</p>
+        <div className="evidence-list compact">
+          {data.evidence.length === 0 && (
+            <article className="evidence-item empty">
+              <p className="evidence-excerpt">No allergy-specific review quotes were found for this place yet.</p>
             </article>
-          ))}
+          )}
+
+          {data.evidence.slice(0, 2).map((item) => {
+            return (
+              <article key={`${item.review_id}-${item.signal_type}-${item.matched_phrase}`} className={`evidence-item ${item.impact}`}>
+                <div className="evidence-item-header">
+                  <span>{item.author_name ?? "Google review"}</span>
+                  <span>{item.rating ? `${item.rating.toFixed(1)}★` : "Rating unavailable"}</span>
+                </div>
+                <p className="evidence-excerpt">{item.excerpt}</p>
+              </article>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
-

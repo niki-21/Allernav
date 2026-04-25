@@ -9,8 +9,12 @@ export type AllergyTag =
   | "sesame"
   | "wheat_gluten";
 
+export type ProfileSensitivity = "watchful" | "careful" | "strict";
+export type DiningMode = "grab_go" | "sit_down" | "late_night" | "study_break";
 export type Verdict = "good_fit" | "use_caution" | "high_risk";
 export type ImpactDirection = "positive" | "negative";
+export type EvidenceStatus = "meaningful" | "limited";
+export type EvidenceTone = "reassuring" | "risk_note";
 export type SignalType =
   | "accommodation"
   | "staff_knowledge"
@@ -38,9 +42,15 @@ export interface PlaceScoreSummary {
   score: number;
   verdict: Verdict;
   confidence: number;
+  fit_score: number;
+  fit_verdict: Verdict;
+  evidence_confidence: number;
   positive_signals: string[];
   negative_signals: string[];
   evidence_count: number;
+  meaningful_evidence: boolean;
+  evidence_status: EvidenceStatus;
+  evidence_summary: string;
 }
 
 export interface ReviewEvidence {
@@ -52,17 +62,75 @@ export interface ReviewEvidence {
   signal_type: SignalType;
   impact: ImpactDirection;
   excerpt: string;
+  matched_phrase: string;
+  signal_label: string;
+  tone: EvidenceTone;
+  is_allergy_relevant: boolean;
   weight: number;
   publish_time?: string | null;
+}
+
+export interface MenuItem {
+  name: string;
+  description?: string | null;
+  price?: string | null;
+  likely_safe_for: AllergyTag[];
+  likely_risky_for: AllergyTag[];
+}
+
+export interface MenuSection {
+  title: string;
+  items: MenuItem[];
+}
+
+export interface PlaceMenu {
+  source_url?: string | null;
+  sections: MenuSection[];
+}
+
+export interface RecommendedMenuItem {
+  name: string;
+  section_title?: string | null;
+  reason: string;
+  caution?: string | null;
+  source: "heuristic" | "llm";
+}
+
+export interface PlaceDecisionBrief {
+  headline: string;
+  summary: string;
+  recommended_action: string;
+  caution_flags: string[];
+}
+
+export interface PlatformUserProfile {
+  id: string;
+  name: string;
+  email?: string | null;
+  auth_provider: "google";
+}
+
+export interface CommunityReview {
+  id: string;
+  author_name: string;
+  body: string;
+  created_at: string;
+  verification_status: "verified_visit" | "signed_in" | "unverified";
 }
 
 export interface PlaceDetailsResponse extends PlaceSummary {
   website_uri?: string | null;
   editorial_summary?: string | null;
+  google_maps_uri: string;
+  google_review_uri: string;
   selected_allergens: AllergyTag[];
   score_summary: PlaceScoreSummary;
   evidence: ReviewEvidence[];
   explanation: string;
+  decision_brief: PlaceDecisionBrief;
+  menu: PlaceMenu | null;
+  recommended_items: RecommendedMenuItem[];
+  community_reviews: CommunityReview[];
 }
 
 export interface SearchResponse {
@@ -77,4 +145,3 @@ export type PlaceDetailState =
   | { status: "loading" }
   | { status: "ready"; data: PlaceDetailsResponse }
   | { status: "error"; message: string };
-

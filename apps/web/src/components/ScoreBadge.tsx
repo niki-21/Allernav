@@ -6,15 +6,22 @@ const VERDICT_COPY: Record<Verdict, string> = {
   high_risk: "High Risk",
 };
 
+const LIMITED_COPY: Record<Verdict, string> = {
+  good_fit: "Menu-led",
+  use_caution: "Low Evidence",
+  high_risk: "Menu Risk",
+};
+
 export default function ScoreBadge({ summary }: { summary: PlaceScoreSummary }) {
+  const badgeCopy = summary.meaningful_evidence ? VERDICT_COPY[summary.fit_verdict] : LIMITED_COPY[summary.fit_verdict];
+
   return (
-    <div className={`score-badge ${summary.verdict}`}>
-      <div className="score-badge-value">{summary.score}</div>
+    <div className={`score-badge ${summary.fit_verdict} ${summary.meaningful_evidence ? "" : "limited"}`.trim()}>
+      <div className="score-badge-value">{summary.fit_score}</div>
       <div className="score-badge-copy">
-        <span>Allergy Fit</span>
-        <strong>{VERDICT_COPY[summary.verdict]}</strong>
+        <span>AI Fit</span>
+        <strong>{badgeCopy}</strong>
       </div>
     </div>
   );
 }
-

@@ -1,7 +1,7 @@
 "use client";
 
 import { GoogleMap, InfoWindow, Marker, useJsApiLoader } from "@react-google-maps/api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
@@ -9,7 +9,9 @@ interface MapProps {
   places: PlaceSummary[];
   details: Record<string, PlaceDetailState>;
   selectedPlaceId: string | null;
+  mapFocusPlaceId: string | null;
   searchCenter: LatLng;
+  searchTargetPlaceId: string | null;
   onPlaceSelect: (placeId: string | null) => void;
   onMapCenterChange: (center: LatLng) => void;
 }
@@ -34,8 +36,11 @@ function getMarkerColor(detailState?: PlaceDetailState): string {
   if (detailState.status === "error") {
     return "#b99277";
   }
+  if (!detailState.data.score_summary.meaningful_evidence) {
+    return "#92857b";
+  }
 
-  switch (detailState.data.score_summary.verdict) {
+  switch (detailState.data.score_summary.fit_verdict) {
     case "good_fit":
       return "#2e8b57";
     case "high_risk":
@@ -49,7 +54,9 @@ export default function Map({
   places,
   details,
   selectedPlaceId,
+  mapFocusPlaceId,
   searchCenter,
+  searchTargetPlaceId,
   onPlaceSelect,
   onMapCenterChange,
 }: MapProps) {
@@ -57,19 +64,59 @@ export default function Map({
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: apiKey,
   });
-  const [map, setMap] = useState<google.maps.Map | null>(null);
-
-  useEffect(() => {
-    if (!map) {
-      return;
-    }
-    map.panTo(searchCenter);
-  }, [map, searchCenter]);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const lastViewportCenter = useRef<string>("");
+  const suppressedViewportPublishes = useRef(0);
 
   const selectedPlace = useMemo(
     () => places.find((place) => place.id === selectedPlaceId) ?? null,
     [places, selectedPlaceId],
   );
+  const placeIds = useMemo(() => new Set(places.map((place) => place.id)), [places]);
+
+  useEffect(() => {
+    if (!mapRef.current) {
+      return;
+    }
+
+    const focusPlace =
+      places.find((place) => place.id === mapFocusPlaceId) ??
+      places.find((place) => place.id === searchTargetPlaceId) ??
+      null;
+
+    const nextCenter = focusPlace?.location ?? searchCenter;
+    suppressedViewportPublishes.current = 2;
+    mapRef.current.panTo(nextCenter);
+
+    if (focusPlace) {
+      mapRef.current.setZoom(Math.max(mapRef.current.getZoom() ?? 14, 16));
+    }
+  }, [mapFocusPlaceId, places, searchCenter, searchTargetPlaceId]);
+
+  const publishViewportCenter = () => {
+    if (suppressedViewportPublishes.current > 0) {
+      suppressedViewportPublishes.current -= 1;
+      return;
+    }
+
+    if (!mapRef.current) {
+      return;
+    }
+
+    const center = mapRef.current.getCenter();
+    if (!center) {
+      return;
+    }
+
+    const nextCenter = { lat: center.lat(), lng: center.lng() };
+    const key = `${nextCenter.lat.toFixed(4)}:${nextCenter.lng.toFixed(4)}`;
+    if (lastViewportCenter.current === key) {
+      return;
+    }
+
+    lastViewportCenter.current = key;
+    onMapCenterChange(nextCenter);
+  };
 
   if (!apiKey) {
     return <div className="map-loading">Add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` to render the map.</div>;
@@ -85,43 +132,62 @@ export default function Map({
       center={searchCenter ?? DEFAULT_CENTER}
       zoom={14}
       onLoad={(instance) => {
-        setMap(instance);
+        mapRef.current = instance;
         instance.setOptions({
           disableDefaultUI: true,
           zoomControl: true,
           streetViewControl: false,
           fullscreenControl: false,
           mapTypeControl: false,
+          clickableIcons: true,
           styles: MAP_STYLES,
           gestureHandling: "greedy",
         });
       }}
-      onIdle={() => {
-        if (!map) {
+      onClick={(event) => {
+        const placeId = event.placeId;
+        if (!placeId || !placeIds.has(placeId)) {
           return;
         }
-        const center = map.getCenter();
-        if (!center) {
-          return;
+        if (typeof event.stop === "function") {
+          event.stop();
         }
-        onMapCenterChange({ lat: center.lat(), lng: center.lng() });
+        onPlaceSelect(placeId);
       }}
+      onDragEnd={publishViewportCenter}
+      onZoomChanged={publishViewportCenter}
     >
-      {places.map((place) => (
-        <Marker
-          key={place.id}
-          position={place.location}
-          onClick={() => onPlaceSelect(place.id)}
-          icon={{
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: selectedPlaceId === place.id ? 10 : 8,
-            fillColor: getMarkerColor(details[place.id]),
-            fillOpacity: 1,
-            strokeColor: "#fffaf4",
-            strokeWeight: 2,
-          }}
-        />
-      ))}
+      {places.map((place) => {
+        const isSelected = selectedPlaceId === place.id;
+        const isSearchTarget = searchTargetPlaceId === place.id;
+
+        return (
+          <Marker
+            key={place.id}
+            position={place.location}
+            onClick={() => onPlaceSelect(place.id)}
+            zIndex={isSelected ? 60 : isSearchTarget ? 50 : 10}
+            label={
+              isSearchTarget
+                ? {
+                    text: "●",
+                    color: "#fffaf4",
+                    fontSize: "13px",
+                    fontWeight: "700",
+                  }
+                : undefined
+            }
+            icon={{
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: isSelected ? 12 : isSearchTarget ? 10 : 8,
+              fillColor: getMarkerColor(details[place.id]),
+              fillOpacity: 1,
+              strokeColor: isSearchTarget ? "#1b7f62" : "#fffaf4",
+              strokeWeight: isSearchTarget ? 4 : 2,
+            }}
+          />
+        );
+      })}
 
       {selectedPlace && (
         <InfoWindow position={selectedPlace.location} onCloseClick={() => onPlaceSelect(null)}>
@@ -130,8 +196,8 @@ export default function Map({
             <p>{selectedPlace.address ?? "Address unavailable"}</p>
             {details[selectedPlace.id]?.status === "ready" ? (
               <span className="map-pill">
-                Allergy Fit {details[selectedPlace.id].data.score_summary.score} ·{" "}
-                {details[selectedPlace.id].data.score_summary.evidence_count} signals
+                Allergy Fit {details[selectedPlace.id].data.score_summary.fit_score} ·{" "}
+                {details[selectedPlace.id].data.score_summary.evidence_summary}
               </span>
             ) : (
               <span className="map-pill">Scoring in progress</span>

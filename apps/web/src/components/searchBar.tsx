@@ -16,6 +16,22 @@ interface SearchBarProps {
   isSearching: boolean;
 }
 
+const GENERIC_SEARCH_TERMS = ["near", "restaurant", "restaurants", "food", "dining", "lunch", "dinner", "cafe", "coffee"];
+
+function shouldFetchSuggestions(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length < 3) {
+    return false;
+  }
+
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  if (wordCount > 3) {
+    return false;
+  }
+
+  return !GENERIC_SEARCH_TERMS.some((term) => normalized.includes(term));
+}
+
 export default function SearchBar({
   query,
   onQueryChange,
@@ -30,7 +46,7 @@ export default function SearchBar({
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     const trimmed = deferredQuery.trim();
-    if (!apiKey || trimmed.length < 3) {
+    if (!apiKey || !shouldFetchSuggestions(trimmed)) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
@@ -48,6 +64,7 @@ export default function SearchBar({
           body: JSON.stringify({
             input: trimmed,
             includedPrimaryTypes: ["restaurant"],
+            includedRegionCodes: ["us"],
             locationBias: {
               circle: {
                 center: { latitude: searchCenter.lat, longitude: searchCenter.lng },
@@ -98,6 +115,9 @@ export default function SearchBar({
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           onFocus={() => setShowSuggestions(suggestions.length > 0)}
+          onBlur={() => {
+            window.setTimeout(() => setShowSuggestions(false), 120);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               submitSearch(query);
@@ -107,12 +127,14 @@ export default function SearchBar({
             }
           }}
           className="search-input"
-          placeholder="Search restaurants, cuisines, or neighborhoods"
+          placeholder="Search College Park restaurants, cafes, dining halls, or takeout"
         />
         <button type="button" className="search-submit" onClick={() => submitSearch(query)}>
           {isSearching ? "Searching..." : "Search"}
         </button>
       </div>
+
+      <p className="search-caption">Try “late night food”, “sushi”, “coffee”, or a specific restaurant near campus.</p>
 
       {showSuggestions && suggestions.length > 0 && (
         <div className="autocomplete-panel">

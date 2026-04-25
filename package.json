@@ -3,7 +3,9 @@
   "private": true,
   "scripts": {
     "dev": "./dev.sh",
-    "start": "./dev.sh"
+    "build": "npm --prefix apps/web run build",
+    "start": "npm --prefix apps/web run start",
+    "test": "npm --prefix apps/web run test",
+    "lint": "npm --prefix apps/web run lint"
   }
 }
-
