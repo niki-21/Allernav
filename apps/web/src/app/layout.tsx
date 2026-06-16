@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Allernav",
-  description: "Search restaurants by allergy fit, review evidence, and trust-backed safety signals.",
+  title: "AllerNav — Agentic AI Dining Safety Assistant",
+  description: "Agentic AI support for safer dining decisions using allergy fit, review evidence, and menu signals.",
 };
 
 export default function RootLayout({

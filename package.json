@@ -1,11 +1,18 @@
 {
   "name": "allernav",
   "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
     "dev": "./dev.sh",
-    "build": "npm --prefix apps/web run build",
-    "start": "npm --prefix apps/web run start",
-    "test": "npm --prefix apps/web run test",
-    "lint": "npm --prefix apps/web run lint"
-  }
+    "build": "npm run build -w apps/web",
+    "start": "npm run start -w apps/web",
+    "test": "npm run test -w apps/web",
+    "lint": "npm run lint -w apps/web"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "packageManager": "npm@10.9.0"
 }

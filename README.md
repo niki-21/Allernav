@@ -1,6 +1,6 @@
-# Allernav
+# AllerNav
 
-Allernav now runs as one Next.js app and deploys as one Vercel project.
+AllerNav is an Agentic AI Dining Safety Assistant. It runs as one Next.js app and deploys as one Vercel project.
 
 That means:
 
@@ -45,19 +45,30 @@ http://localhost:3000
 
 Use a single Vercel project connected to this GitHub repo.
 
-Vercel settings:
+Preferred Vercel settings:
 
 - Root Directory: `apps/web`
 - Framework Preset: `Next.js`
 - Install Command: `npm install`
 - Build Command: `npm run build`
 
+The root package is configured with npm workspaces for local commands, but the Vercel project should still use `apps/web` as its Root Directory so Vercel detects and serves the Next.js app.
+
 Vercel environment variables:
 
 - `GOOGLE_MAPS_API_KEY`
 - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`
+- `OPENAI_API_KEY` (optional; enables AI-written menu recommendations)
 
-Use the same key for both values.
+Use the same Google key for both Google values. Google is required for search and maps. OpenAI is optional; the app falls back to heuristic recommendations when it is missing.
+
+After deploy, check:
+
+```bash
+https://your-project.vercel.app/api/health
+```
+
+`ok: true` means the required Google server and browser keys are configured.
 
 After deploy, Vercel gives you one URL such as:
 
