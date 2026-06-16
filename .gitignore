@@ -17,3 +17,5 @@ __pycache__/
 
 # Local caches
 .pytest_cache/
+.vercel
+.env*
