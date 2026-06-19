@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from .agent_graph import run_dining_safety_graph
 from .google_places import GooglePlacesClient
 from .models import (
     AllergyProfile,
@@ -13,6 +14,7 @@ from .models import (
     MenuRefreshJob,
     PlaceDetailsResponse,
     PlaceMenu,
+    RestaurantContext,
     SearchRequest,
     SearchResponse,
     UserProfileResponse,
@@ -57,6 +59,15 @@ async def get_place_details_service(
     summary.meaningful_evidence = summary.evidence_count > 0
     summary.evidence_status = "meaningful" if summary.meaningful_evidence else "limited"
     summary.evidence_summary = "Allergy-specific evidence found" if summary.meaningful_evidence else "Not enough allergy-specific evidence"
+    agent_recommendation = run_dining_safety_graph(
+        profile=AllergyProfile(allergens=selected_allergens),
+        restaurant_id=place["id"],
+        restaurant_name=place["name"],
+        context=RestaurantContext(
+            restaurant_id=place["id"],
+            restaurant_name=place["name"],
+        ),
+    )
 
     return PlaceDetailsResponse(
         id=place["id"],
@@ -78,6 +89,7 @@ async def get_place_details_service(
         score_summary=summary,
         evidence=evidence,
         explanation=explanation,
+        agent_recommendation=agent_recommendation,
     )
 
 

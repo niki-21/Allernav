@@ -4,6 +4,8 @@ import asyncio
 import unittest
 
 from allernav_api.models import AllergyTag, LatLng, SearchRequest
+from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuSource, SourceType
+from allernav_api.agent_service import analyze_menu_service
 from main import allowed_origins
 from allernav_api.service import get_place_details_service, search_places_service
 
@@ -98,6 +100,29 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.score_summary.evidence_count, 0)
         self.assertEqual(response.score_summary.verdict.value, "use_caution")
+
+    def test_analyze_menu_service_returns_source_backed_recommendation(self) -> None:
+        response = asyncio.run(
+            analyze_menu_service(
+                AnalyzeMenuRequest(
+                    restaurant_name="Demo Pasta",
+                    profile=AllergyProfile(allergens=[AllergyTag.DAIRY]),
+                    menu_sources=[
+                        MenuSource(
+                            source_type=SourceType.OFFICIAL_MENU,
+                            source_url="https://example.com/menu",
+                            reliability=0.9,
+                            raw_text="Chicken Alfredo - pasta with cream sauce, butter, and parmesan",
+                        )
+                    ],
+                )
+            )
+        )
+
+        dumped = response.model_dump()
+        self.assertEqual(dumped["overall_risk"], "high")
+        self.assertEqual(dumped["recommended_action"], "avoid")
+        self.assertGreaterEqual(len(dumped["evidence"]), 1)
 
 
 if __name__ == "__main__":

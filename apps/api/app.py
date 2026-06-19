@@ -9,14 +9,31 @@ from allernav_api.google_places import GooglePlacesClient, GooglePlacesError
 from allernav_api.models import (
     AllergyProfile,
     AllergyTag,
+    AnalyzeMenuRequest,
+    AnalyzeRestaurantRequest,
     AskRestaurantRequest,
     AskRestaurantResponse,
+    ChatRequest,
+    ChatResponse,
+    EvidenceFragment,
+    FeedbackEvent,
+    FeedbackResponse,
     MenuRefreshJob,
     PlaceDetailsResponse,
     PlaceMenu,
+    RecommendationResult,
+    RecommendDishesRequest,
     SearchRequest,
     SearchResponse,
     UserProfileResponse,
+)
+from allernav_api.agent_service import (
+    analyze_menu_service,
+    analyze_restaurant_service,
+    chat_service,
+    feedback_service,
+    recommend_dishes_service,
+    restaurant_evidence_service,
 )
 from allernav_api.service import (
     create_menu_refresh_job,
@@ -90,6 +107,42 @@ async def search_places_endpoint(
         return await search_places_service(payload, client)
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/analyze-restaurant", response_model=RecommendationResult)
+@app.post("/api/analyze-restaurant", response_model=RecommendationResult)
+async def analyze_restaurant_endpoint(payload: AnalyzeRestaurantRequest) -> RecommendationResult:
+    return await analyze_restaurant_service(payload)
+
+
+@app.post("/analyze-menu", response_model=RecommendationResult)
+@app.post("/api/analyze-menu", response_model=RecommendationResult)
+async def analyze_menu_endpoint(payload: AnalyzeMenuRequest) -> RecommendationResult:
+    return await analyze_menu_service(payload)
+
+
+@app.post("/recommend-dishes", response_model=RecommendationResult)
+@app.post("/api/recommend-dishes", response_model=RecommendationResult)
+async def recommend_dishes_endpoint(payload: RecommendDishesRequest) -> RecommendationResult:
+    return await recommend_dishes_service(payload)
+
+
+@app.post("/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_endpoint(payload: ChatRequest) -> ChatResponse:
+    return await chat_service(payload)
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+@app.post("/api/feedback", response_model=FeedbackResponse)
+async def feedback_endpoint(payload: FeedbackEvent) -> FeedbackResponse:
+    return await feedback_service(payload)
+
+
+@app.get("/restaurants/{restaurant_id}/evidence", response_model=list[EvidenceFragment])
+@app.get("/api/restaurants/{restaurant_id}/evidence", response_model=list[EvidenceFragment])
+async def restaurant_evidence_endpoint(restaurant_id: str) -> list[EvidenceFragment]:
+    return await restaurant_evidence_service(restaurant_id)
 
 
 @app.get("/api/places/{place_id}", response_model=PlaceDetailsResponse)

@@ -1,4 +1,12 @@
-import type { AllergyTag, AskRestaurantResponse, LatLng, MenuRefreshJob, PlaceDetailsResponse, SearchResponse } from "./types";
+import type {
+  AgentRecommendationResult,
+  AllergyTag,
+  AskRestaurantResponse,
+  LatLng,
+  MenuRefreshJob,
+  PlaceDetailsResponse,
+  SearchResponse,
+} from "./types";
 
 const API_PREFIX = (process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "") + "/api";
 
@@ -72,4 +80,30 @@ export async function askRestaurant(
     throw new Error(await response.text());
   }
   return (await response.json()) as AskRestaurantResponse;
+}
+
+export async function analyzeRestaurant(
+  placeId: string,
+  placeName: string,
+  allergens: AllergyTag[],
+): Promise<AgentRecommendationResult> {
+  const response = await fetch(`${API_PREFIX}/analyze-restaurant`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      restaurant_id: placeId,
+      restaurant_name: placeName,
+      profile: {
+        allergens,
+        sensitivity: "careful",
+        prep_preference: "verify",
+      },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as AgentRecommendationResult;
 }

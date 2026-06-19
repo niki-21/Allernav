@@ -23,6 +23,29 @@ class Verdict(str, Enum):
     HIGH_RISK = "high_risk"
 
 
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+class RecommendedAction(str, Enum):
+    VERIFY = "verify"
+    AVOID = "avoid"
+    ASK_STAFF = "ask_staff"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+class SourceType(str, Enum):
+    OFFICIAL_MENU = "official_menu"
+    RESTAURANT_WEBSITE = "restaurant_website"
+    REVIEW = "review"
+    FIXTURE = "fixture"
+    USER_UPLOAD = "user_upload"
+    UNKNOWN = "unknown"
+
+
 class SignalType(str, Enum):
     ACCOMMODATION = "accommodation"
     STAFF_KNOWLEDGE = "staff_knowledge"
@@ -119,6 +142,7 @@ class PlaceDetailsResponse(BaseModel):
     menu: "PlaceMenu | None" = None
     recommended_items: list["RecommendedMenuItem"] = Field(default_factory=list)
     community_reviews: list["CommunityReview"] = Field(default_factory=list)
+    agent_recommendation: "RecommendationResult | None" = None
 
 
 class MenuItem(BaseModel):
@@ -142,6 +166,109 @@ class PlaceMenu(BaseModel):
     source_fetched_at: str | None = None
     status: str = "missing"
     sections: list[MenuSection] = Field(default_factory=list)
+
+
+class MenuSource(BaseModel):
+    source_type: SourceType = SourceType.UNKNOWN
+    source_url: str | None = None
+    source_timestamp: str | None = None
+    reliability: float = Field(default=0.5, ge=0, le=1)
+    raw_text: str | None = None
+    sections: list[MenuSection] = Field(default_factory=list)
+
+
+class EvidenceFragment(BaseModel):
+    id: str
+    source_type: SourceType
+    text: str
+    source_url: str | None = None
+    source_timestamp: str | None = None
+    dish_name: str | None = None
+    matched_allergens: list[AllergyTag] = Field(default_factory=list)
+    reliability: float = Field(default=0.5, ge=0, le=1)
+
+
+class DishRiskResult(BaseModel):
+    dish: str
+    risk_level: RiskLevel
+    confidence: float = Field(ge=0, le=1)
+    detected_allergens: list[AllergyTag] = Field(default_factory=list)
+    evidence: list[EvidenceFragment] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    recommended_questions: list[str] = Field(default_factory=list)
+    recommended_action: RecommendedAction
+
+
+class AgentTraceSummary(BaseModel):
+    nodes: list[str] = Field(default_factory=list)
+    tool_calls: list[str] = Field(default_factory=list)
+    abstained: bool = False
+    routed_to_safety_gate: bool = False
+
+
+class RecommendationResult(BaseModel):
+    restaurant_id: str | None = None
+    restaurant_name: str | None = None
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    overall_risk: RiskLevel
+    confidence: float = Field(ge=0, le=1)
+    summary: str
+    dish_results: list[DishRiskResult] = Field(default_factory=list)
+    evidence: list[EvidenceFragment] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    recommended_questions: list[str] = Field(default_factory=list)
+    recommended_action: RecommendedAction
+    trace: AgentTraceSummary = Field(default_factory=AgentTraceSummary)
+
+
+class RestaurantContext(BaseModel):
+    restaurant_id: str | None = None
+    restaurant_name: str | None = None
+    location: LatLng | None = None
+    menu_sources: list[MenuSource] = Field(default_factory=list)
+    review_evidence: list[EvidenceFragment] = Field(default_factory=list)
+
+
+class AnalyzeMenuRequest(BaseModel):
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    restaurant_name: str | None = None
+    menu_sources: list[MenuSource] = Field(default_factory=list)
+
+
+class AnalyzeRestaurantRequest(BaseModel):
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    restaurant_id: str | None = None
+    restaurant_name: str | None = None
+    context: RestaurantContext | None = None
+
+
+class RecommendDishesRequest(BaseModel):
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    context: RestaurantContext
+
+
+class ChatRequest(BaseModel):
+    message: str
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    context: RestaurantContext | None = None
+
+
+class FeedbackEvent(BaseModel):
+    recommendation_id: str | None = None
+    restaurant_id: str | None = None
+    useful: bool | None = None
+    correction: str | None = None
+    created_at: str | None = None
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    recommendation: RecommendationResult
+
+
+class FeedbackResponse(BaseModel):
+    id: str
+    status: str = "recorded"
 
 
 class RecommendedMenuItem(BaseModel):

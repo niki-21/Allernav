@@ -15,6 +15,9 @@ export type Verdict = "good_fit" | "use_caution" | "high_risk";
 export type ImpactDirection = "positive" | "negative";
 export type EvidenceStatus = "meaningful" | "limited";
 export type EvidenceTone = "reassuring" | "risk_note";
+export type AgentRiskLevel = "low" | "medium" | "high" | "insufficient_evidence";
+export type AgentRecommendedAction = "verify" | "avoid" | "ask_staff" | "insufficient_evidence";
+export type AgentSourceType = "official_menu" | "restaurant_website" | "review" | "fixture" | "user_upload" | "unknown";
 export type SignalType =
   | "accommodation"
   | "staff_knowledge"
@@ -151,6 +154,49 @@ export interface CommunityReview {
   verification_status: "verified_visit" | "signed_in" | "unverified";
 }
 
+export interface AgentEvidenceFragment {
+  id: string;
+  source_type: AgentSourceType;
+  text: string;
+  source_url?: string | null;
+  source_timestamp?: string | null;
+  dish_name?: string | null;
+  matched_allergens: AllergyTag[];
+  reliability: number;
+}
+
+export interface DishRiskResult {
+  dish: string;
+  risk_level: AgentRiskLevel;
+  confidence: number;
+  detected_allergens: AllergyTag[];
+  evidence: AgentEvidenceFragment[];
+  missing_information: string[];
+  recommended_questions: string[];
+  recommended_action: AgentRecommendedAction;
+}
+
+export interface AgentTraceSummary {
+  nodes: string[];
+  tool_calls: string[];
+  abstained: boolean;
+  routed_to_safety_gate: boolean;
+}
+
+export interface AgentRecommendationResult {
+  restaurant_id?: string | null;
+  restaurant_name?: string | null;
+  overall_risk: AgentRiskLevel;
+  confidence: number;
+  summary: string;
+  dish_results: DishRiskResult[];
+  evidence: AgentEvidenceFragment[];
+  missing_information: string[];
+  recommended_questions: string[];
+  recommended_action: AgentRecommendedAction;
+  trace: AgentTraceSummary;
+}
+
 export interface PlaceDetailsResponse extends PlaceSummary {
   website_uri?: string | null;
   editorial_summary?: string | null;
@@ -166,6 +212,7 @@ export interface PlaceDetailsResponse extends PlaceSummary {
   menu: PlaceMenu | null;
   recommended_items: RecommendedMenuItem[];
   community_reviews: CommunityReview[];
+  agent_recommendation?: AgentRecommendationResult | null;
 }
 
 export interface SearchResponse {
