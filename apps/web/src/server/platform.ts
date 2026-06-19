@@ -10,6 +10,7 @@ export function getPlatformViewer(): {
   };
 }
 
-export function getCommunityReviews(_placeId: string): CommunityReview[] {
+export function getCommunityReviews(placeId: string): CommunityReview[] {
+  void placeId;
   return [];
 }

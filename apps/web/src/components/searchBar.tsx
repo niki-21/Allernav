@@ -48,9 +48,11 @@ export default function SearchBar({
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     const trimmed = deferredQuery.trim();
     if (!apiKey || !shouldFetchSuggestions(trimmed) || suppressedSuggestionQuery.current === trimmed) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
+      const timer = window.setTimeout(() => {
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     const timer = window.setTimeout(async () => {
