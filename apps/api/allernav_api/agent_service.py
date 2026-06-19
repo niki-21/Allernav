@@ -31,11 +31,21 @@ async def analyze_menu_service(payload: AnalyzeMenuRequest) -> RecommendationRes
 
 
 async def analyze_restaurant_service(payload: AnalyzeRestaurantRequest) -> RecommendationResult:
+    context = payload.context
+    if context is None and (payload.restaurant_id or payload.restaurant_name or payload.website_url):
+        context = RestaurantContext(
+            restaurant_id=payload.restaurant_id,
+            restaurant_name=payload.restaurant_name,
+            website_url=payload.website_url,
+        )
+    elif context is not None and payload.website_url and not context.website_url:
+        context = context.model_copy(update={"website_url": payload.website_url})
+
     return run_dining_safety_graph(
         profile=payload.profile,
         restaurant_id=payload.restaurant_id,
         restaurant_name=payload.restaurant_name,
-        context=payload.context,
+        context=context,
     )
 
 

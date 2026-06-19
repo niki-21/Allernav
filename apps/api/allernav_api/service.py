@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from .agent_graph import run_dining_safety_graph
 from .google_places import GooglePlacesClient
+from .menu_ingestion import ingest_menu_from_website, load_place_menu
 from .models import (
     AllergyProfile,
     AllergyTag,
@@ -94,21 +95,54 @@ async def get_place_details_service(
 
 
 async def get_place_menu_service(place_id: str) -> PlaceMenu:
-    return PlaceMenu(
-        place_id=place_id,
-        status="missing",
-        sections=[],
-    )
+    return load_place_menu(place_id)
 
 
-async def create_menu_refresh_job(place_id: str) -> MenuRefreshJob:
+async def create_menu_refresh_job(
+    place_id: str,
+    restaurant_name: str | None = None,
+    website_url: str | None = None,
+    client: GooglePlacesClient | None = None,
+) -> MenuRefreshJob:
     now = datetime.now(UTC).isoformat()
+    resolved_name = restaurant_name
+    resolved_url = website_url
+
+    if not resolved_url and client is not None:
+        place = client.get_place_details(place_id)
+        resolved_name = resolved_name or place.get("name")
+        resolved_url = place.get("website_uri")
+
+    if not resolved_url:
+        job = MenuRefreshJob(
+            id=str(uuid4()),
+            place_id=place_id,
+            status="failed",
+            message="Menu refresh needs a restaurant website URL before official menu ingestion can run.",
+            created_at=now,
+            completed_at=datetime.now(UTC).isoformat(),
+        )
+        MENU_REFRESH_JOBS[job.id] = job
+        return job
+
+    source = ingest_menu_from_website(
+        restaurant_id=place_id,
+        restaurant_name=resolved_name,
+        website_url=resolved_url,
+    )
+    status = "complete" if source.sections else "failed"
+    item_count = sum(len(section.items) for section in source.sections)
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
-        status="queued",
-        message="Menu refresh queued. AllerNav will check compliant public menu sources and update this place when ready.",
+        status=status,
+        message=(
+            f"Menu refresh complete. Captured {item_count} menu item{'' if item_count == 1 else 's'} from {source.source_url}."
+            if item_count
+            else "Menu refresh ran, but no structured official menu items were extracted."
+        ),
         created_at=now,
+        completed_at=datetime.now(UTC).isoformat(),
     )
     MENU_REFRESH_JOBS[job.id] = job
     return job

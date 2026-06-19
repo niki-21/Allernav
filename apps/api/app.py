@@ -163,8 +163,16 @@ async def place_menu_endpoint(place_id: str) -> PlaceMenu:
 
 
 @app.post("/api/places/{place_id}/menu-refresh", response_model=MenuRefreshJob)
-async def menu_refresh_endpoint(place_id: str) -> MenuRefreshJob:
-    return await create_menu_refresh_job(place_id)
+async def menu_refresh_endpoint(
+    place_id: str,
+    restaurant_name: str | None = Query(default=None),
+    website_url: str | None = Query(default=None),
+    client: GooglePlacesClient = Depends(get_places_client),
+) -> MenuRefreshJob:
+    try:
+        return await create_menu_refresh_job(place_id, restaurant_name, website_url, client)
+    except GooglePlacesError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/places/{place_id}/ask", response_model=AskRestaurantResponse)

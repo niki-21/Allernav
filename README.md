@@ -135,6 +135,26 @@ POST /recommend-dishes
 POST /chat
 POST /feedback
 GET  /restaurants/{id}/evidence
+GET  /api/places/{id}/menu
+POST /api/places/{id}/menu-refresh
+```
+
+Menu ingestion stores extracted HTML/JSON-LD menu records in SQLite. By default the database is created at:
+
+```text
+apps/api/.data/menu_ingestion.sqlite
+```
+
+That `.data` directory is local-only and ignored by git. Override it when needed:
+
+```bash
+ALLERNAV_MENU_DB=/tmp/allernav-menu.sqlite
+```
+
+Refresh a menu from an official restaurant site:
+
+```bash
+curl -X POST "http://localhost:8000/api/places/demo/menu-refresh?restaurant_name=Demo&website_url=https://example.com"
 ```
 
 The same endpoints are also available under `/api/...` so the existing frontend API prefix can target this service with:
