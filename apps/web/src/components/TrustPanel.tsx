@@ -99,10 +99,10 @@ export default function TrustPanel({
     menuStatus === "queued"
       ? "Queued"
       : menuStatus === "running"
-        ? "Refreshing"
+        ? "Scanning"
         : menuStatus === "complete"
-          ? "Refresh again"
-          : "Refresh menu";
+          ? "Re-scan source"
+          : "Re-scan menu source";
 
   return (
     <div className="trust-panel-content">
@@ -194,7 +194,7 @@ export default function TrustPanel({
             <p>
               {menuItemCount > 0
                 ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} captured from ${data.menu?.source_url ?? "available sources"}.`
-                : "Use Refresh menu to collect the latest menu from the restaurant website, linked menu pages, PDFs, or accessible images."}
+                : "AllerNav checks official menu sources when a restaurant website is available. Re-scan only if the source looks stale or incomplete."}
             </p>
           </div>
           {menuRefreshJob && <p className="menu-job-note">{menuRefreshJob.message}</p>}
@@ -208,8 +208,8 @@ export default function TrustPanel({
               <strong>Menu</strong>
               <p>
                 {menuItemCount > 0
-                  ? `${menuItemCount} items found. Inferred items are never labeled safe.`
-                  : "No menu captured yet."}
+                  ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} found. Inferred items are never labeled safe.`
+                  : "No reliable menu items extracted yet."}
               </p>
             </div>
             {data.menu?.source_url && (
@@ -249,8 +249,8 @@ export default function TrustPanel({
             <article className="empty-menu-state">
               <strong>Get menu information</strong>
               <p>
-                Press Refresh menu. AllerNav queues a menu collection run for compliant public sources: the restaurant
-                website, linked menu or ordering pages, PDFs, and accessible menu images.
+                AllerNav checks compliant public sources for the selected restaurant: the restaurant website, linked menu
+                or ordering pages, PDFs, and accessible menu images. Re-scan if the source looks stale or incomplete.
               </p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">

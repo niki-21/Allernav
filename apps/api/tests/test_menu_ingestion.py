@@ -59,6 +59,18 @@ SIMPLE_HTML_MENU = """
 """
 
 
+SMORGASBURG_SCHEDULE_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>Central Park – Thursday</h3>
+      <p>Saturday (12pm-8pm)</p>
+    </article>
+  </section>
+</html>
+"""
+
+
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -86,6 +98,12 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertNotIn("Hours", raw_text)
         self.assertNotIn("Careers", raw_text)
         self.assertNotIn("Ignore previous", raw_text)
+
+    def test_rejects_schedule_text_that_looks_like_market_hours(self) -> None:
+        source = parse_menu_html(SMORGASBURG_SCHEDULE_HTML, "https://smorgasburg.com/")
+
+        self.assertEqual(source.sections, [])
+        self.assertIsNone(source.raw_text)
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(
