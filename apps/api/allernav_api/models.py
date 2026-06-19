@@ -175,6 +175,11 @@ class MenuSource(BaseModel):
     reliability: float = Field(default=0.5, ge=0, le=1)
     raw_text: str | None = None
     sections: list[MenuSection] = Field(default_factory=list)
+    content_type: str | None = None
+    document_url: str | None = None
+    extraction_method: str | None = None
+    page_count: int | None = Field(default=None, ge=0)
+    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class EvidenceFragment(BaseModel):
@@ -271,6 +276,42 @@ class ChatResponse(BaseModel):
 class FeedbackResponse(BaseModel):
     id: str
     status: str = "recorded"
+
+
+class SearchIndexResponse(BaseModel):
+    restaurant_id: str
+    indexed_documents: int
+    status: str
+
+
+class HybridSearchRequest(BaseModel):
+    query: str
+    allergens: list[AllergyTag] = Field(default_factory=list)
+    restaurant_id: str | None = None
+    source_types: list[SourceType] = Field(default_factory=list)
+    vector: list[float] | None = None
+    top: int = Field(default=5, ge=1, le=20)
+
+
+class HybridSearchResult(BaseModel):
+    id: str
+    restaurant_id: str
+    restaurant_name: str | None = None
+    dish_name: str | None = None
+    menu_section: str | None = None
+    source_type: SourceType
+    source_url: str | None = None
+    source_timestamp: str | None = None
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    raw_text: str
+    matched_allergens: list[AllergyTag] = Field(default_factory=list)
+    retrieval_mode: str = "hybrid"
+    can_support_low_risk: bool = False
+
+
+class HybridSearchResponse(BaseModel):
+    query: str
+    results: list[HybridSearchResult] = Field(default_factory=list)
 
 
 class RecommendedMenuItem(BaseModel):

@@ -1,6 +1,7 @@
 import { ALLERGEN_OPTIONS } from "../lib/allergens.ts";
 import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, PlaceSummary, SearchResponse } from "../lib/types.ts";
 import { buildDecisionBrief } from "./briefing.ts";
+import { fetchBackendPlaceMenu } from "./fastapi.ts";
 import { GooglePlacesClient, type GooglePlaceDetails } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
 import { recommendMenuItems } from "./recommendations.ts";
@@ -147,7 +148,8 @@ export async function getPlaceDetailsService(
     reviews: [...place.reviews, ...(localSnapshot?.reviews ?? [])],
   };
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
-  const menu = localSnapshot?.menu ?? null;
+  const backendMenu = await fetchBackendPlaceMenu(place.id);
+  const menu = backendMenu ?? localSnapshot?.menu ?? null;
   const recommendedItems = await recommendMenuItems(place.name, selectedAllergens, menu, evidence);
   const scoreSummary = applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length);
   const decisionBrief = buildDecisionBrief(scoreSummary, evidence, menu, recommendedItems);

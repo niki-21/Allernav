@@ -11,11 +11,18 @@ from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+from .document_intelligence import (
+    DocumentExtraction,
+    document_content_type,
+    extract_document_from_url,
+    looks_like_document_url,
+)
 from .models import EvidenceFragment, MenuItem, MenuSection, MenuSource, PlaceMenu, SourceType
 from .risk_engine import is_prompt_injection, parse_raw_menu_text
 
 
 FetchHtml = Callable[[str], str | None]
+ExtractDocument = Callable[[str], DocumentExtraction | None]
 
 MENU_NAVIGATION_WORDS = {
     "home",
@@ -104,16 +111,23 @@ def save_menu_source(
         )
 
 
-def load_menu_source(restaurant_id: str, db_path: Path | None = None) -> MenuSource | None:
+def load_menu_record(restaurant_id: str, db_path: Path | None = None) -> tuple[str | None, MenuSource] | None:
     with connect(db_path) as connection:
         row = connection.execute(
-            "SELECT menu_json, status FROM menu_records WHERE restaurant_id = ?",
+            "SELECT restaurant_name, menu_json, status FROM menu_records WHERE restaurant_id = ?",
             (restaurant_id,),
         ).fetchone()
 
-    if not row or row[1] != "complete":
+    if not row or row[2] != "complete":
         return None
-    return MenuSource.model_validate_json(row[0])
+    return row[0], MenuSource.model_validate_json(row[1])
+
+
+def load_menu_source(restaurant_id: str, db_path: Path | None = None) -> MenuSource | None:
+    record = load_menu_record(restaurant_id, db_path)
+    if not record:
+        return None
+    return record[1]
 
 
 def load_place_menu(restaurant_id: str, db_path: Path | None = None) -> PlaceMenu:
@@ -158,13 +172,28 @@ def ingest_menu_from_website(
     restaurant_name: str | None,
     website_url: str,
     fetch_html: FetchHtml | None = None,
+    extract_document: ExtractDocument | None = None,
     db_path: Path | None = None,
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
+    document_extractor = extract_document or extract_document_from_url
     candidate_urls = discover_candidate_urls(website_url, fetcher)
     last_source: MenuSource | None = None
 
     for candidate_url in candidate_urls:
+        if looks_like_document_url(candidate_url):
+            source = parse_menu_document(candidate_url, document_extractor)
+            last_source = source
+            if source.sections:
+                save_menu_source(
+                    restaurant_id=restaurant_id,
+                    restaurant_name=restaurant_name,
+                    source=source,
+                    db_path=db_path,
+                )
+                return source
+            continue
+
         page = fetcher(candidate_url)
         if not page:
             continue
@@ -244,6 +273,41 @@ def parse_menu_html(html_text: str, source_url: str) -> MenuSource:
     )
 
 
+def parse_menu_document(document_url: str, extract_document: ExtractDocument | None = None) -> MenuSource:
+    timestamp = datetime.now(UTC).isoformat()
+    extractor = extract_document or extract_document_from_url
+    extraction = extractor(document_url)
+    if not extraction:
+        return MenuSource(
+            source_type=SourceType.OFFICIAL_MENU,
+            source_url=document_url,
+            source_timestamp=timestamp,
+            reliability=0.2,
+            raw_text=None,
+            sections=[],
+            content_type=document_content_type(document_url),
+            document_url=document_url,
+            extraction_method="azure_document_intelligence",
+        )
+
+    sections = sanitize_sections(parse_raw_menu_text(extraction.content))
+    confidence = extraction.confidence if extraction.confidence is not None else 0.55
+    reliability = round(min(0.76, max(0.22, confidence)), 2) if sections else 0.22
+    return MenuSource(
+        source_type=SourceType.OFFICIAL_MENU,
+        source_url=document_url,
+        source_timestamp=timestamp,
+        reliability=reliability,
+        raw_text=summarize_menu_text(sections) or None,
+        sections=sections,
+        content_type=extraction.content_type,
+        document_url=document_url,
+        extraction_method=extraction.extraction_method,
+        page_count=extraction.page_count,
+        extraction_confidence=extraction.confidence,
+    )
+
+
 def parse_json_ld_menus(html_text: str) -> list[MenuSection]:
     sections: list[MenuSection] = []
     for raw_json in re.findall(
@@ -287,9 +351,9 @@ def extract_candidate_menu_urls(html_text: str, base_url: str) -> list[str]:
     for href, label in re.findall(r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</a>", html_text, flags=re.IGNORECASE):
         text = html_to_text(label).lower()
         target = href.lower()
-        if not re.search(r"menu|food|order", f"{target} {text}"):
-            continue
         absolute = absolute_url(href, base_url)
+        if not re.search(r"menu|food|order", f"{target} {text}") and not looks_like_document_url(absolute):
+            continue
         if absolute and absolute not in urls:
             urls.append(absolute)
     return urls

@@ -18,6 +18,8 @@ from allernav_api.models import (
     EvidenceFragment,
     FeedbackEvent,
     FeedbackResponse,
+    HybridSearchRequest,
+    HybridSearchResponse,
     MenuRefreshJob,
     PlaceDetailsResponse,
     PlaceMenu,
@@ -25,6 +27,7 @@ from allernav_api.models import (
     RecommendDishesRequest,
     SearchRequest,
     SearchResponse,
+    SearchIndexResponse,
     UserProfileResponse,
 )
 from allernav_api.agent_service import (
@@ -41,6 +44,8 @@ from allernav_api.service import (
     get_place_details_service,
     get_place_menu_service,
     get_user_profile,
+    hybrid_search_service,
+    index_restaurant_menu_service,
     remove_saved_place,
     save_place,
     search_places_service,
@@ -173,6 +178,16 @@ async def menu_refresh_endpoint(
         return await create_menu_refresh_job(place_id, restaurant_name, website_url, client)
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/restaurants/{restaurant_id}/search-index", response_model=SearchIndexResponse)
+async def restaurant_search_index_endpoint(restaurant_id: str) -> SearchIndexResponse:
+    return await index_restaurant_menu_service(restaurant_id)
+
+
+@app.post("/api/search/hybrid", response_model=HybridSearchResponse)
+async def hybrid_search_endpoint(payload: HybridSearchRequest) -> HybridSearchResponse:
+    return await hybrid_search_service(payload)
 
 
 @app.post("/api/places/{place_id}/ask", response_model=AskRestaurantResponse)
