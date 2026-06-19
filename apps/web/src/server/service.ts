@@ -1,5 +1,5 @@
 import { ALLERGEN_OPTIONS } from "../lib/allergens.ts";
-import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, SearchResponse } from "../lib/types.ts";
+import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, PlaceSummary, SearchResponse } from "../lib/types.ts";
 import { buildDecisionBrief } from "./briefing.ts";
 import { GooglePlacesClient, type GooglePlaceDetails } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
@@ -19,7 +19,7 @@ export interface SearchRequestPayload {
 }
 
 export interface PlacesClientLike {
-  searchPlaces(query: string, center: LatLng, maxResults?: number): Promise<Array<Record<string, any>>>;
+  searchPlaces(query: string, center: LatLng, maxResults?: number): Promise<PlaceSummary[]>;
   getPlaceDetails(placeId: string): Promise<GooglePlaceDetails>;
 }
 

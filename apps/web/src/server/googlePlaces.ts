@@ -14,6 +14,48 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+interface GoogleLocalizedText {
+  text?: string;
+}
+
+interface GoogleAuthorAttribution {
+  displayName?: string;
+}
+
+interface GooglePlacesApiReview {
+  name?: string;
+  authorAttribution?: GoogleAuthorAttribution;
+  rating?: number;
+  originalText?: GoogleLocalizedText;
+  text?: GoogleLocalizedText;
+  publishTime?: string;
+  relativePublishTimeDescription?: string;
+}
+
+interface GooglePlacesApiPhoto {
+  name?: string;
+  widthPx?: number;
+  heightPx?: number;
+  authorAttributions?: GoogleAuthorAttribution[];
+}
+
+interface GooglePlacesApiPlace {
+  id?: string;
+  displayName?: GoogleLocalizedText;
+  formattedAddress?: string;
+  location?: {
+    latitude?: number;
+    longitude?: number;
+  };
+  rating?: number;
+  userRatingCount?: number;
+  primaryType?: string;
+  websiteUri?: string;
+  editorialSummary?: GoogleLocalizedText;
+  reviews?: GooglePlacesApiReview[];
+  photos?: GooglePlacesApiPhoto[];
+}
+
 export interface GooglePlaceReview {
   review_id: string;
   author_name?: string | null;
@@ -83,7 +125,7 @@ async function requestJson<T>(
   return (await response.json()) as T;
 }
 
-function parsePlaceSummary(place: Record<string, any>): PlaceSummary {
+function parsePlaceSummary(place: GooglePlacesApiPlace): PlaceSummary {
   const location = place.location ?? {};
 
   return {
@@ -100,7 +142,7 @@ function parsePlaceSummary(place: Record<string, any>): PlaceSummary {
   };
 }
 
-function parsePlaceDetails(place: Record<string, any>): GooglePlaceDetails {
+function parsePlaceDetails(place: GooglePlacesApiPlace): GooglePlaceDetails {
   const location = place.location ?? {};
   const reviews = Array.isArray(place.reviews) ? place.reviews : [];
   const photos = Array.isArray(place.photos) ? place.photos : [];
@@ -119,19 +161,19 @@ function parsePlaceDetails(place: Record<string, any>): GooglePlaceDetails {
     website_uri: place.websiteUri ?? null,
     editorial_summary: place.editorialSummary?.text ?? null,
     photos: photos
-      .filter((photo: Record<string, any>) => typeof photo.name === "string")
+      .filter((photo) => typeof photo.name === "string")
       .slice(0, 6)
-      .map((photo: Record<string, any>) => ({
-        name: photo.name,
+      .map((photo) => ({
+        name: photo.name ?? "",
         width_px: photo.widthPx ?? null,
         height_px: photo.heightPx ?? null,
         author_names: Array.isArray(photo.authorAttributions)
           ? photo.authorAttributions
-              .map((author: Record<string, any>) => author.displayName)
+              .map((author) => author.displayName)
               .filter((name: unknown): name is string => typeof name === "string" && name.trim().length > 0)
           : [],
       })),
-    reviews: reviews.map((review: Record<string, any>, index: number) => {
+    reviews: reviews.map((review, index) => {
       const textPayload = review.originalText ?? review.text ?? {};
 
       return {
@@ -160,7 +202,7 @@ export class GooglePlacesClient {
       "places.primaryType",
     ].join(",");
 
-    const payload = await requestJson<{ places?: Array<Record<string, any>> }>(endpoint, {
+    const payload = await requestJson<{ places?: GooglePlacesApiPlace[] }>(endpoint, {
       method: "POST",
       fieldMask,
       body: usesTextSearch
@@ -207,7 +249,7 @@ export class GooglePlacesClient {
       return cached.payload;
     }
 
-    const payload = await requestJson<Record<string, any>>(`/places/${encodeURIComponent(placeId)}`, {
+    const payload = await requestJson<GooglePlacesApiPlace>(`/places/${encodeURIComponent(placeId)}`, {
       method: "GET",
       fieldMask: [
         "id",

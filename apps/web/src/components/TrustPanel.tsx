@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 
 import type { AskRestaurantResponse, MenuRefreshJob, PlaceDetailState, PlaceSummary } from "@/lib/types";
@@ -108,10 +109,12 @@ export default function TrustPanel({
       {photos.length > 0 && (
         <div className="place-photo-strip" aria-label="Place photos">
           {photos.slice(0, 4).map((photo, index) => (
-            <img
+            <Image
               key={photo.name}
               src={photo.url}
               alt={`${data.name} photo ${index + 1}`}
+              width={180}
+              height={96}
               loading="lazy"
             />
           ))}
