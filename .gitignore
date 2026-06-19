@@ -9,6 +9,7 @@ out/
 .venv/
 __pycache__/
 *.py[cod]
+apps/api/.data/
 
 # Environment files
 .env

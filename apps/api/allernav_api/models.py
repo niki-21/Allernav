@@ -224,6 +224,7 @@ class RecommendationResult(BaseModel):
 class RestaurantContext(BaseModel):
     restaurant_id: str | None = None
     restaurant_name: str | None = None
+    website_url: str | None = None
     location: LatLng | None = None
     menu_sources: list[MenuSource] = Field(default_factory=list)
     review_evidence: list[EvidenceFragment] = Field(default_factory=list)
@@ -239,6 +240,7 @@ class AnalyzeRestaurantRequest(BaseModel):
     profile: AllergyProfile = Field(default_factory=AllergyProfile)
     restaurant_id: str | None = None
     restaurant_name: str | None = None
+    website_url: str | None = None
     context: RestaurantContext | None = None
 
 
