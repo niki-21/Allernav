@@ -113,3 +113,39 @@ npm run dev
 npm run test
 npm run build
 ```
+
+## Agentic FastAPI Backend
+
+The FastAPI service now includes a first-pass LangGraph dining-safety workflow with deterministic allergen risk scoring.
+
+Run the backend locally:
+
+```bash
+cd apps/api
+python3 -m pip install -r requirements.txt
+PYTHONPATH=. python3 -m uvicorn app:app --reload --port 8000
+```
+
+Useful endpoints:
+
+```text
+POST /analyze-restaurant
+POST /analyze-menu
+POST /recommend-dishes
+POST /chat
+POST /feedback
+GET  /restaurants/{id}/evidence
+```
+
+The same endpoints are also available under `/api/...` so the existing frontend API prefix can target this service with:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+Backend checks:
+
+```bash
+cd /Users/nikitamiller/Desktop/allernav
+PYTHONPATH=apps/api python3 -m pytest apps/api/tests
+```

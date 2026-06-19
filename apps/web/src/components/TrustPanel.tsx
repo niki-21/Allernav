@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { AskRestaurantResponse, MenuRefreshJob, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
@@ -18,6 +18,10 @@ interface TrustPanelProps {
 
 type PlaceTab = "overview" | "menu" | "reviews" | "about";
 
+function formatRiskLabel(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
 export default function TrustPanel({
   place,
   detailState,
@@ -29,11 +33,10 @@ export default function TrustPanel({
   isRefreshingMenu = false,
   isAskingRestaurant = false,
 }: TrustPanelProps) {
-  const [activeTab, setActiveTab] = useState<PlaceTab>("overview");
-
-  useEffect(() => {
-    setActiveTab("overview");
-  }, [place?.id]);
+  const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
+    placeId: null,
+    tab: "overview",
+  });
 
   if (!place) {
     return (
@@ -73,6 +76,7 @@ export default function TrustPanel({
   }
 
   const { data } = detailState;
+  const activeTab = tabState.placeId === data.id ? tabState.tab : "overview";
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
   const reviewSnippets = data.review_snippets ?? [];
@@ -87,6 +91,8 @@ export default function TrustPanel({
           ? "Local menu snapshot only"
           : "Very limited signal";
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
+  const agentRecommendation = data.agent_recommendation ?? null;
+  const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
   const menuStatus = isRefreshingMenu ? "running" : menuRefreshJob?.status;
   const refreshLabel =
     menuStatus === "queued"
@@ -139,7 +145,7 @@ export default function TrustPanel({
             role="tab"
             aria-selected={activeTab === tab}
             className={`place-tab ${activeTab === tab ? "active" : ""}`}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => setTabState({ placeId: data.id, tab })}
           >
             {tab}
           </button>
@@ -152,6 +158,28 @@ export default function TrustPanel({
             <strong>{data.decision_brief.headline}</strong>
             <p>{data.decision_brief.summary}</p>
           </div>
+          {agentRecommendation && (
+            <div className={`overview-line agent-risk ${agentRecommendation.overall_risk}`}>
+              <strong>
+                Agentic risk: {formatRiskLabel(agentRecommendation.overall_risk)} ·{" "}
+                {formatRiskLabel(agentRecommendation.recommended_action)}
+              </strong>
+              <p>{agentRecommendation.summary}</p>
+              {agentConfidencePercent !== null && <p>{agentConfidencePercent}% source confidence.</p>}
+            </div>
+          )}
+          {agentRecommendation && agentRecommendation.missing_information.length > 0 && (
+            <div className="overview-line">
+              <strong>Missing information</strong>
+              <p>{agentRecommendation.missing_information.slice(0, 2).join(" ")}</p>
+            </div>
+          )}
+          {agentRecommendation && agentRecommendation.recommended_questions.length > 0 && (
+            <div className="overview-line">
+              <strong>Questions for staff</strong>
+              <p>{agentRecommendation.recommended_questions.slice(0, 2).join(" ")}</p>
+            </div>
+          )}
           {photos.length > 0 && (
             <div className="overview-line">
               <strong>Photos</strong>
@@ -242,6 +270,23 @@ export default function TrustPanel({
             </div>
           )}
 
+          {agentRecommendation && agentRecommendation.dish_results.length > 0 && (
+            <div className="menu-section-list compact-recommendations">
+              <strong>Agent dish risk</strong>
+              {agentRecommendation.dish_results.slice(0, 3).map((item) => (
+                <article key={`${item.dish}-${item.risk_level}`} className="menu-list-item">
+                  <strong>{item.dish}</strong>
+                  <p>
+                    {formatRiskLabel(item.risk_level)} · {Math.round(item.confidence * 100)}% confidence
+                  </p>
+                  {item.detected_allergens.length > 0 && (
+                    <p>Flags: {item.detected_allergens.map((allergen) => allergen.replace("_", " ")).join(", ")}</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+
           <button type="button" className="ask-button" onClick={onAskRestaurant} disabled={isAskingRestaurant}>
             {isAskingRestaurant ? "Saving question..." : "Ask restaurant to verify"}
           </button>
@@ -282,6 +327,28 @@ export default function TrustPanel({
             </div>
           </div>
 
+          {agentRecommendation && agentRecommendation.evidence.length > 0 && (
+            <div className="review-group">
+              <strong>Menu evidence</strong>
+              <div className="evidence-list compact">
+                {agentRecommendation.evidence.slice(0, 4).map((item) => (
+                  <article key={item.id} className="evidence-item">
+                    <div className="evidence-item-header">
+                      <span>{item.dish_name ?? "Menu source"}</span>
+                      <span>{formatRiskLabel(item.source_type)}</span>
+                    </div>
+                    <p className="evidence-excerpt">{item.text}</p>
+                    {item.matched_allergens.length > 0 && (
+                      <p className="review-source-line">
+                        Matched {item.matched_allergens.map((allergen) => allergen.replace("_", " ")).join(", ")}
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="review-group">
             <strong>Recent Google reviews</strong>
             <div className="evidence-list compact">
@@ -320,6 +387,12 @@ export default function TrustPanel({
             <strong>Safety note</strong>
             <p>Use inferred information cautiously and verify ingredients, prep surfaces, and cross-contact before ordering.</p>
           </div>
+          {agentRecommendation && (
+            <div className="overview-line">
+              <strong>Agent trace</strong>
+              <p>{agentRecommendation.trace.nodes.join(" -> ")}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

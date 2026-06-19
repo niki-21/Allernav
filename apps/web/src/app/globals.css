@@ -1408,6 +1408,24 @@ body {
   border-bottom: 1px solid rgba(60, 64, 67, 0.1);
 }
 
+.overview-line.agent-risk {
+  border-left: 3px solid #1a73e8;
+  padding-left: 12px;
+}
+
+.overview-line.agent-risk.high {
+  border-left-color: #b3261e;
+}
+
+.overview-line.agent-risk.medium,
+.overview-line.agent-risk.insufficient_evidence {
+  border-left-color: #b06000;
+}
+
+.overview-line.agent-risk.low {
+  border-left-color: #137333;
+}
+
 .overview-line strong,
 .menu-source-row strong,
 .empty-menu-state strong,
