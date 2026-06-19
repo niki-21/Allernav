@@ -18,6 +18,13 @@ export function buildSearchPayload(query: string, center: LatLng, allergens: All
   };
 }
 
+export function buildMenuRefreshPayload(context: { placeName?: string | null; websiteUrl?: string | null }) {
+  return {
+    restaurant_name: context.placeName ?? null,
+    website_url: context.websiteUrl ?? null,
+  };
+}
+
 export function buildPlaceDetailsUrl(placeId: string, allergens: AllergyTag[]): string {
   const params = new URLSearchParams();
   allergens.forEach((allergen) => params.append("allergens", allergen));
@@ -50,9 +57,16 @@ export async function fetchPlaceDetails(placeId: string, allergens: AllergyTag[]
   return (await response.json()) as PlaceDetailsResponse;
 }
 
-export async function refreshPlaceMenu(placeId: string): Promise<MenuRefreshJob> {
+export async function refreshPlaceMenu(
+  placeId: string,
+  context: { placeName?: string | null; websiteUrl?: string | null } = {},
+): Promise<MenuRefreshJob> {
   const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu-refresh`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildMenuRefreshPayload(context)),
   });
   if (!response.ok) {
     throw new Error(await response.text());

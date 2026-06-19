@@ -4,11 +4,14 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from .agent_graph import run_dining_safety_graph
+from .azure_search import hybrid_search_menu, index_restaurant_menu
 from .google_places import GooglePlacesClient
-from .menu_ingestion import ingest_menu_from_website, load_place_menu
+from .menu_ingestion import ingest_menu_from_website, load_menu_source, load_place_menu
 from .models import (
     AllergyProfile,
     AllergyTag,
+    HybridSearchRequest,
+    HybridSearchResponse,
     AskRestaurantRequest,
     AskRestaurantResponse,
     LatLng,
@@ -18,6 +21,7 @@ from .models import (
     RestaurantContext,
     SearchRequest,
     SearchResponse,
+    SearchIndexResponse,
     UserProfileResponse,
 )
 from .scoring import analyze_place
@@ -60,6 +64,8 @@ async def get_place_details_service(
     summary.meaningful_evidence = summary.evidence_count > 0
     summary.evidence_status = "meaningful" if summary.meaningful_evidence else "limited"
     summary.evidence_summary = "Allergy-specific evidence found" if summary.meaningful_evidence else "Not enough allergy-specific evidence"
+    stored_menu_source = load_menu_source(place["id"])
+    place_menu = load_place_menu(place["id"])
     agent_recommendation = run_dining_safety_graph(
         profile=AllergyProfile(allergens=selected_allergens),
         restaurant_id=place["id"],
@@ -67,6 +73,8 @@ async def get_place_details_service(
         context=RestaurantContext(
             restaurant_id=place["id"],
             restaurant_name=place["name"],
+            website_url=place.get("website_uri"),
+            menu_sources=[stored_menu_source] if stored_menu_source else [],
         ),
     )
 
@@ -90,6 +98,7 @@ async def get_place_details_service(
         score_summary=summary,
         evidence=evidence,
         explanation=explanation,
+        menu=place_menu if place_menu.status == "complete" else None,
         agent_recommendation=agent_recommendation,
     )
 
@@ -146,6 +155,14 @@ async def create_menu_refresh_job(
     )
     MENU_REFRESH_JOBS[job.id] = job
     return job
+
+
+async def index_restaurant_menu_service(restaurant_id: str) -> SearchIndexResponse:
+    return index_restaurant_menu(restaurant_id)
+
+
+async def hybrid_search_service(payload: HybridSearchRequest) -> HybridSearchResponse:
+    return hybrid_search_menu(payload)
 
 
 async def create_restaurant_question(payload: AskRestaurantRequest) -> AskRestaurantResponse:

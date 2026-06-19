@@ -227,13 +227,21 @@ export default function Home() {
   };
 
   const refreshSelectedMenu = async () => {
-    if (!selectedPlaceId) {
+    if (!selectedPlaceId || !selectedPlace) {
       return;
     }
     setRefreshingPlaceId(selectedPlaceId);
     try {
-      const job = await refreshPlaceMenu(selectedPlaceId);
+      const detailState = detailStates[selectedPlaceId];
+      const selectedDetails = detailState?.status === "ready" ? detailState.data : null;
+      const job = await refreshPlaceMenu(selectedPlaceId, {
+        placeName: selectedDetails?.name ?? selectedPlace.name,
+        websiteUrl: selectedDetails?.website_uri ?? null,
+      });
       setMenuRefreshJobs((current) => ({ ...current, [selectedPlaceId]: job }));
+      const sequence = ++requestSequence.current;
+      setDetailStates((current) => ({ ...current, [selectedPlaceId]: { status: "loading" } }));
+      void hydratePlaces([selectedPlace], selectedAllergens, sequence);
     } catch (error) {
       setMenuRefreshJobs((current) => ({
         ...current,

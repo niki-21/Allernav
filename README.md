@@ -137,9 +137,18 @@ POST /feedback
 GET  /restaurants/{id}/evidence
 GET  /api/places/{id}/menu
 POST /api/places/{id}/menu-refresh
+POST /api/restaurants/{id}/search-index
+POST /api/search/hybrid
 ```
 
-Menu ingestion stores extracted HTML/JSON-LD menu records in SQLite. By default the database is created at:
+Menu ingestion stores extracted HTML/JSON-LD menu records in SQLite. PDF and image menu links are detected as document sources and can be extracted with Azure Document Intelligence when these variables are set:
+
+```bash
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=
+AZURE_DOCUMENT_INTELLIGENCE_KEY=
+```
+
+By default the SQLite database is created at:
 
 ```text
 apps/api/.data/menu_ingestion.sqlite
@@ -162,6 +171,22 @@ The same endpoints are also available under `/api/...` so the existing frontend 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
+
+For the Next.js route bridge, set this server-side value in `apps/web/.env.local`:
+
+```bash
+FASTAPI_API_BASE_URL=http://localhost:8000
+```
+
+Azure AI Search indexing and hybrid retrieval are optional until Phase 3 infrastructure is provisioned:
+
+```bash
+AZURE_SEARCH_ENDPOINT=
+AZURE_SEARCH_API_KEY=
+AZURE_SEARCH_INDEX_NAME=allernav-menu-evidence
+```
+
+The deterministic allergen engine remains the safety authority. Hybrid/vector retrieval can surface evidence, but it does not decide that a dish is lower risk.
 
 Backend checks:
 
