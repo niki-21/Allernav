@@ -167,6 +167,21 @@ export async function getPlaceDetailsService(
     selected_allergens: selectedAllergens,
     score_summary: scoreSummary,
     evidence,
+    review_snippets: mergedPlace.reviews
+      .filter((review) => review.text.trim().length > 0)
+      .slice(0, 5)
+      .map((review) => ({
+        review_id: review.review_id,
+        author_name: review.author_name ?? null,
+        rating: review.rating ?? null,
+        text: review.text,
+        publish_time: review.publish_time ?? null,
+        relative_publish_time: review.relative_publish_time ?? null,
+      })),
+    photos: (place.photos ?? []).map((photo) => ({
+      ...photo,
+      url: `/api/place-photo?name=${encodeURIComponent(photo.name)}&maxWidthPx=900`,
+    })),
     explanation,
     decision_brief: decisionBrief,
     menu,

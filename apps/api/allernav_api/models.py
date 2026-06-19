@@ -44,6 +44,8 @@ class LatLng(BaseModel):
 
 class AllergyProfile(BaseModel):
     allergens: list[AllergyTag] = Field(default_factory=list)
+    sensitivity: str = "careful"
+    prep_preference: str = "verify"
 
 
 class SearchRequest(BaseModel):
@@ -74,9 +76,15 @@ class PlaceScoreSummary(BaseModel):
     score: int = Field(ge=0, le=100)
     verdict: Verdict
     confidence: float = Field(ge=0, le=1)
+    fit_score: int = Field(default=0, ge=0, le=100)
+    fit_verdict: Verdict | None = None
+    evidence_confidence: float = Field(default=0, ge=0, le=1)
     positive_signals: list[str] = Field(default_factory=list)
     negative_signals: list[str] = Field(default_factory=list)
     evidence_count: int = Field(default=0, ge=0)
+    meaningful_evidence: bool = False
+    evidence_status: str = "limited"
+    evidence_summary: str = "Limited allergy evidence"
 
 
 class ReviewEvidence(BaseModel):
@@ -102,8 +110,83 @@ class PlaceDetailsResponse(BaseModel):
     primary_type: str | None = None
     website_uri: str | None = None
     editorial_summary: str | None = None
+    google_maps_uri: str
+    google_review_uri: str
     selected_allergens: list[AllergyTag]
     score_summary: PlaceScoreSummary
     evidence: list[ReviewEvidence]
     explanation: str
+    menu: "PlaceMenu | None" = None
+    recommended_items: list["RecommendedMenuItem"] = Field(default_factory=list)
+    community_reviews: list["CommunityReview"] = Field(default_factory=list)
 
+
+class MenuItem(BaseModel):
+    name: str
+    description: str | None = None
+    price: str | None = None
+    confirmed_allergens: list[AllergyTag] = Field(default_factory=list)
+    inferred_risks: list[AllergyTag] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
+    verification_status: str = "inferred"
+
+
+class MenuSection(BaseModel):
+    title: str
+    items: list[MenuItem] = Field(default_factory=list)
+
+
+class PlaceMenu(BaseModel):
+    place_id: str | None = None
+    source_url: str | None = None
+    source_fetched_at: str | None = None
+    status: str = "missing"
+    sections: list[MenuSection] = Field(default_factory=list)
+
+
+class RecommendedMenuItem(BaseModel):
+    name: str
+    section_title: str | None = None
+    reason: str
+    caution: str | None = None
+    source: str = "heuristic"
+
+
+class CommunityReview(BaseModel):
+    id: str
+    author_name: str
+    body: str
+    created_at: str
+    verification_status: str = "unverified"
+
+
+class MenuRefreshJob(BaseModel):
+    id: str
+    place_id: str
+    status: str = "queued"
+    message: str
+    created_at: str
+    completed_at: str | None = None
+
+
+class AskRestaurantRequest(BaseModel):
+    place_id: str
+    place_name: str | None = None
+    allergens: list[AllergyTag] = Field(default_factory=list)
+    question: str | None = None
+
+
+class AskRestaurantResponse(BaseModel):
+    id: str
+    status: str = "queued"
+    message: str
+    suggested_script: str
+
+
+class UserProfileResponse(BaseModel):
+    authenticated: bool = False
+    profile: AllergyProfile = Field(default_factory=AllergyProfile)
+    saved_places: list[str] = Field(default_factory=list)
+
+
+PlaceDetailsResponse.model_rebuild()

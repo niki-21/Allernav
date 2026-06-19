@@ -23,10 +23,18 @@ export interface GooglePlaceReview {
   relative_publish_time?: string | null;
 }
 
+export interface GooglePlacePhoto {
+  name: string;
+  width_px?: number | null;
+  height_px?: number | null;
+  author_names: string[];
+}
+
 export interface GooglePlaceDetails extends PlaceSummary {
   website_uri?: string | null;
   editorial_summary?: string | null;
   reviews: GooglePlaceReview[];
+  photos: GooglePlacePhoto[];
 }
 
 const placeCache = new Map<string, CacheEntry>();
@@ -95,6 +103,7 @@ function parsePlaceSummary(place: Record<string, any>): PlaceSummary {
 function parsePlaceDetails(place: Record<string, any>): GooglePlaceDetails {
   const location = place.location ?? {};
   const reviews = Array.isArray(place.reviews) ? place.reviews : [];
+  const photos = Array.isArray(place.photos) ? place.photos : [];
 
   return {
     id: place.id,
@@ -109,6 +118,19 @@ function parsePlaceDetails(place: Record<string, any>): GooglePlaceDetails {
     primary_type: place.primaryType ?? null,
     website_uri: place.websiteUri ?? null,
     editorial_summary: place.editorialSummary?.text ?? null,
+    photos: photos
+      .filter((photo: Record<string, any>) => typeof photo.name === "string")
+      .slice(0, 6)
+      .map((photo: Record<string, any>) => ({
+        name: photo.name,
+        width_px: photo.widthPx ?? null,
+        height_px: photo.heightPx ?? null,
+        author_names: Array.isArray(photo.authorAttributions)
+          ? photo.authorAttributions
+              .map((author: Record<string, any>) => author.displayName)
+              .filter((name: unknown): name is string => typeof name === "string" && name.trim().length > 0)
+          : [],
+      })),
     reviews: reviews.map((review: Record<string, any>, index: number) => {
       const textPayload = review.originalText ?? review.text ?? {};
 
@@ -198,6 +220,7 @@ export class GooglePlacesClient {
         "primaryType",
         "editorialSummary",
         "reviews",
+        "photos",
       ].join(","),
     });
 

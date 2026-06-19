@@ -1,6 +1,6 @@
 # AllerNav
 
-AllerNav is an Agentic AI Dining Safety Assistant. It runs as one Next.js app and deploys as one Vercel project.
+AllerNav is an Agentic AI Dining Safety Assistant. The v2 frontend is a map-first Next.js app, with a FastAPI service available for dining/search/menu/agent APIs.
 
 That means:
 
@@ -21,12 +21,16 @@ npm install
 
 2. Create `apps/web/.env.local` from `apps/web/.env.example`.
 
-3. Put the same Google key in both variables:
+3. Use separate Google keys:
 
 ```bash
-GOOGLE_MAPS_API_KEY=your_google_maps_key
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_key
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_browser_maps_key
+GOOGLE_PLACES_API_KEY=your_server_places_key
+GEMINI_API_KEY=your_gemini_key
+GEMINI_MODEL=gemini-3.5-flash
 ```
+
+The browser key must allow the Maps JavaScript API and the site referrer. The server key must allow Places API and must not be restricted by browser referrer.
 
 4. Start the app from the repo root:
 
@@ -56,11 +60,15 @@ The root package is configured with npm workspaces for local commands, but the V
 
 Vercel environment variables:
 
-- `GOOGLE_MAPS_API_KEY`
 - `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`
-- `OPENAI_API_KEY` (optional; enables AI-written menu recommendations)
+- `GOOGLE_PLACES_API_KEY`
+- `GEMINI_API_KEY` (optional; enables Gemini-written menu recommendations)
+- `GEMINI_MODEL` (defaults to `gemini-3.5-flash`)
+- `NEXT_PUBLIC_API_BASE_URL` (set to the FastAPI service URL when deployed)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 
-Use the same Google key for both Google values. Google is required for search and maps. OpenAI is optional; the app falls back to heuristic recommendations when it is missing.
+Google is required for search and maps. Gemini is optional; the app falls back to cautious heuristic recommendations when it is missing.
 
 After deploy, check:
 

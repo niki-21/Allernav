@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 
 import type { LatLng } from "@/lib/types";
 
@@ -42,11 +42,12 @@ export default function SearchBar({
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const deferredQuery = useDeferredValue(query);
+  const suppressedSuggestionQuery = useRef<string | null>(null);
 
   useEffect(() => {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
     const trimmed = deferredQuery.trim();
-    if (!apiKey || !shouldFetchSuggestions(trimmed)) {
+    if (!apiKey || !shouldFetchSuggestions(trimmed) || suppressedSuggestionQuery.current === trimmed) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
@@ -104,6 +105,7 @@ export default function SearchBar({
     if (!nextQuery) {
       return;
     }
+    suppressedSuggestionQuery.current = nextQuery;
     setShowSuggestions(false);
     onSearch(nextQuery);
   };
@@ -113,7 +115,10 @@ export default function SearchBar({
       <div className="search-bar">
         <input
           value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
+          onChange={(event) => {
+            suppressedSuggestionQuery.current = null;
+            onQueryChange(event.target.value);
+          }}
           onFocus={() => setShowSuggestions(suggestions.length > 0)}
           onBlur={() => {
             window.setTimeout(() => setShowSuggestions(false), 120);
@@ -127,14 +132,14 @@ export default function SearchBar({
             }
           }}
           className="search-input"
-          placeholder="Search College Park restaurants, cafes, dining halls, or takeout"
+          placeholder="Search restaurants, cuisines, or a place"
         />
         <button type="button" className="search-submit" onClick={() => submitSearch(query)}>
           {isSearching ? "Searching..." : "Search"}
         </button>
       </div>
 
-      <p className="search-caption">Try “late night food”, “sushi”, “coffee”, or a specific restaurant near campus.</p>
+      <p className="search-caption">Try “sushi”, “coffee”, “gluten-free pizza”, or a restaurant name.</p>
 
       {showSuggestions && suggestions.length > 0 && (
         <div className="autocomplete-panel">

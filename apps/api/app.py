@@ -6,8 +6,29 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from allernav_api.google_places import GooglePlacesClient, GooglePlacesError
-from allernav_api.models import AllergyTag, PlaceDetailsResponse, SearchRequest, SearchResponse
-from allernav_api.service import get_place_details_service, search_places_service
+from allernav_api.models import (
+    AllergyProfile,
+    AllergyTag,
+    AskRestaurantRequest,
+    AskRestaurantResponse,
+    MenuRefreshJob,
+    PlaceDetailsResponse,
+    PlaceMenu,
+    SearchRequest,
+    SearchResponse,
+    UserProfileResponse,
+)
+from allernav_api.service import (
+    create_menu_refresh_job,
+    create_restaurant_question,
+    get_place_details_service,
+    get_place_menu_service,
+    get_user_profile,
+    remove_saved_place,
+    save_place,
+    search_places_service,
+    update_user_profile,
+)
 
 
 def get_places_client() -> GooglePlacesClient:
@@ -43,8 +64,21 @@ def root() -> dict[str, str]:
 
 
 @app.get("/health")
-def health() -> dict[str, bool]:
-    return {"ok": True}
+def health() -> dict[str, object]:
+    google_server = bool(os.getenv("GOOGLE_PLACES_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY"))
+    google_client = bool(os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"))
+    gemini = bool(os.getenv("GEMINI_API_KEY"))
+    supabase = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+    return {
+        "ok": google_server,
+        "service": "AllerNav API",
+        "environment": {
+            "google_places_server": google_server,
+            "google_maps_client": google_client,
+            "gemini": gemini,
+            "supabase": supabase,
+        },
+    }
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -69,3 +103,37 @@ async def place_details_endpoint(
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+
+@app.get("/api/places/{place_id}/menu", response_model=PlaceMenu)
+async def place_menu_endpoint(place_id: str) -> PlaceMenu:
+    return await get_place_menu_service(place_id)
+
+
+@app.post("/api/places/{place_id}/menu-refresh", response_model=MenuRefreshJob)
+async def menu_refresh_endpoint(place_id: str) -> MenuRefreshJob:
+    return await create_menu_refresh_job(place_id)
+
+
+@app.post("/api/places/{place_id}/ask", response_model=AskRestaurantResponse)
+async def ask_restaurant_endpoint(place_id: str, payload: AskRestaurantRequest) -> AskRestaurantResponse:
+    return await create_restaurant_question(payload.model_copy(update={"place_id": place_id}))
+
+
+@app.get("/api/me/profile", response_model=UserProfileResponse)
+async def get_profile_endpoint() -> UserProfileResponse:
+    return await get_user_profile()
+
+
+@app.put("/api/me/profile", response_model=UserProfileResponse)
+async def update_profile_endpoint(profile: AllergyProfile) -> UserProfileResponse:
+    return await update_user_profile(profile)
+
+
+@app.post("/api/me/saved-places/{place_id}", response_model=UserProfileResponse)
+async def save_place_endpoint(place_id: str) -> UserProfileResponse:
+    return await save_place(place_id)
+
+
+@app.delete("/api/me/saved-places/{place_id}", response_model=UserProfileResponse)
+async def remove_saved_place_endpoint(place_id: str) -> UserProfileResponse:
+    return await remove_saved_place(place_id)

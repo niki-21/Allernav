@@ -163,120 +163,79 @@ function heuristicRecommendationsWithEvidence(
     }));
 }
 
-function extractOutputText(payload: Record<string, unknown>): string | null {
-  const output = Array.isArray(payload.output) ? payload.output : [];
-
-  for (const item of output) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-
-    const content = Array.isArray((item as { content?: unknown[] }).content)
-      ? ((item as { content: unknown[] }).content as unknown[])
-      : [];
-
-    for (const part of content) {
-      if (
-        part &&
-        typeof part === "object" &&
-        (part as { type?: string }).type === "output_text" &&
-        typeof (part as { text?: unknown }).text === "string"
-      ) {
-        return (part as { text: string }).text;
-      }
+function extractGeminiText(payload: Record<string, unknown>): string | null {
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+  for (const candidate of candidates) {
+    const content = (candidate as { content?: { parts?: unknown[] } })?.content;
+    const parts = Array.isArray(content?.parts) ? content.parts : [];
+    const text = parts
+      .map((part) => ((part as { text?: unknown }).text && typeof (part as { text: unknown }).text === "string" ? (part as { text: string }).text : ""))
+      .join("")
+      .trim();
+    if (text) {
+      return text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
     }
   }
-
   return null;
 }
 
-async function llmRecommendations(
+async function geminiRecommendations(
   placeName: string,
   allergens: AllergyTag[],
   menu: PlaceMenu,
   evidence: ReviewEvidence[],
 ): Promise<RecommendedMenuItem[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     return null;
   }
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash";
+  const prompt = JSON.stringify({
+    task:
+      "Recommend up to 3 existing menu items to verify for a diner with allergies. Do not call any item safe. Separate confirmed ingredients, inferred risks, and unknowns in the reasoning.",
+    place_name: placeName,
+    selected_allergens: allergens,
+    evidence: evidence.slice(0, 4).map((item) => ({
+      signal_label: item.signal_label,
+      impact: item.impact,
+      matched_allergens: item.matched_allergens,
+      excerpt: item.excerpt,
+    })),
+    menu,
+    output_schema: {
+      recommendations: [
+        {
+          name: "existing menu item name",
+          section_title: "menu section title",
+          reason: "one sentence; say verify with staff when inferred",
+          caution: "required when information is inferred or unknown",
+        },
+      ],
+    },
+  });
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini",
-      input: [
-        {
-          role: "system",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "You recommend restaurant menu items for people with food allergies. Only recommend items that already exist in the provided menu. Reply as strict JSON matching the requested schema.",
-            },
-          ],
-        },
+      contents: [
         {
           role: "user",
-          content: [
+          parts: [
             {
-              type: "input_text",
-              text: JSON.stringify({
-                place_name: placeName,
-                selected_allergens: allergens,
-                evidence: evidence.slice(0, 4).map((item) => ({
-                  signal_label: item.signal_label,
-                  impact: item.impact,
-                  matched_allergens: item.matched_allergens,
-                  excerpt: item.excerpt,
-                })),
-                menu,
-                output_schema: {
-                  recommendations: [
-                    {
-                      name: "existing menu item name",
-                      section_title: "menu section title",
-                      reason: "one sentence",
-                      caution: "optional caution",
-                    },
-                  ],
-                },
-              }),
+              text:
+                "You recommend restaurant menu items for people with food allergies. Only recommend items that exist in the provided menu. Reply with strict JSON only.\n\n" +
+                prompt,
             },
           ],
         },
       ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "allernav_menu_recommendations",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              recommendations: {
-                type: "array",
-                maxItems: 3,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    name: { type: "string" },
-                    section_title: { type: ["string", "null"] },
-                    reason: { type: "string" },
-                    caution: { type: ["string", "null"] },
-                  },
-                  required: ["name", "section_title", "reason", "caution"],
-                },
-              },
-            },
-            required: ["recommendations"],
-          },
-        },
+      generationConfig: {
+        responseMimeType: "application/json",
       },
     }),
   });
@@ -286,7 +245,7 @@ async function llmRecommendations(
   }
 
   const payload = (await response.json()) as Record<string, unknown>;
-  const outputText = extractOutputText(payload);
+  const outputText = extractGeminiText(payload);
   if (!outputText) {
     return null;
   }
@@ -337,7 +296,7 @@ export async function recommendMenuItems(
   }
 
   try {
-    const llm = await llmRecommendations(placeName, allergens, menu, evidence);
+    const llm = await geminiRecommendations(placeName, allergens, menu, evidence);
     if (llm && llm.length > 0) {
       return llm;
     }

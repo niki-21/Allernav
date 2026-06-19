@@ -1,0 +1,14 @@
+.git
+.git/**
+node_modules
+node_modules/**
+apps/web/node_modules
+apps/web/node_modules/**
+apps/web/.next
+apps/web/.next/**
+apps/api/.venv
+apps/api/.venv/**
+apps/api/__pycache__
+apps/api/__pycache__/**
+.vercel/output
+.vercel/output/**

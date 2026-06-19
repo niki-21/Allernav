@@ -11,23 +11,13 @@ import {
   ALLERGY_PROFILE_STORAGE_KEY,
   DEFAULT_ALLERGENS,
 } from "@/lib/allergens";
-import { fetchPlaceDetails, searchPlaces } from "@/lib/api";
+import { askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
 import { rankPlaces, shouldShowSearchAreaButton } from "@/lib/placeRanking";
 import { applyPlaceDetailError, applyPlaceDetailSuccess, seedPlaceDetailsState } from "@/lib/placeState";
-import type { AllergyTag, LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type { AllergyTag, AskRestaurantResponse, LatLng, MenuRefreshJob, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
-const DEFAULT_CENTER: LatLng = { lat: 38.9869, lng: -76.9426 };
-const DEFAULT_QUERY = "restaurants near University of Maryland";
-
-const QUICK_SEARCHES: Array<{
-  label: string;
-  query: string;
-}> = [
-  { label: "Quick lunch", query: "quick lunch near UMD" },
-  { label: "Study break cafe", query: "coffee and cafe near UMD" },
-  { label: "Sit-down dinner", query: "sit down dinner near College Park" },
-  { label: "Late-night food", query: "late night food near College Park" },
-];
+const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
+const DEFAULT_QUERY = "";
 
 export default function Home() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
@@ -41,9 +31,12 @@ export default function Home() {
   const [searchTargetPlaceId, setSearchTargetPlaceId] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [activeQuickStartLabel, setActiveQuickStartLabel] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<"idle" | "locating" | "denied">("idle");
+  const [menuRefreshJobs, setMenuRefreshJobs] = useState<Record<string, MenuRefreshJob>>({});
+  const [refreshingPlaceId, setRefreshingPlaceId] = useState<string | null>(null);
+  const [askResponses, setAskResponses] = useState<Record<string, AskRestaurantResponse>>({});
+  const [askingPlaceId, setAskingPlaceId] = useState<string | null>(null);
   const initialized = useRef(false);
-  const bootstrappedSearch = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
   const requestSequence = useRef(0);
   const [profileReady, setProfileReady] = useState(false);
@@ -83,15 +76,15 @@ export default function Home() {
     [rankedPlaces, selectedPlaceId],
   );
 
-  const hydratedCount = useMemo(
-    () => Object.values(detailStates).filter((item) => item.status === "ready").length,
-    [detailStates],
-  );
   const selectedAllergenKey = useMemo(() => selectedAllergens.join("|"), [selectedAllergens]);
   const canSearchArea = useMemo(() => shouldShowSearchAreaButton(searchCenter, mapCenter), [mapCenter, searchCenter]);
   const selectedAllergenSummary = useMemo(
-    () => `${selectedAllergens.length} allergen${selectedAllergens.length === 1 ? "" : "s"} selected`,
-    [selectedAllergens.length],
+    () =>
+      selectedAllergens
+        .map((allergen) => allergen.replace("_", " "))
+        .map((allergen) => allergen.charAt(0).toUpperCase() + allergen.slice(1))
+        .join(", "),
+    [selectedAllergens],
   );
 
   const hydratePlaces = useCallback(async (nextPlaces: PlaceSummary[], allergens: AllergyTag[], sequence: number) => {
@@ -167,15 +160,7 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (!profileReady || bootstrappedSearch.current) {
-      return;
-    }
-    bootstrappedSearch.current = true;
-    void runSearch(DEFAULT_QUERY, DEFAULT_CENTER, selectedAllergens);
-  }, [profileReady, runSearch, selectedAllergens]);
-
-  useEffect(() => {
-    if (!bootstrappedSearch.current || !places.length) {
+    if (!profileReady || !places.length) {
       return;
     }
     if (hydratedAllergenKey.current === null) {
@@ -190,7 +175,7 @@ export default function Home() {
     const sequence = ++requestSequence.current;
     setDetailStates(seedPlaceDetailsState(places.map((place) => place.id)));
     void hydratePlaces(places, selectedAllergens, sequence);
-  }, [hydratePlaces, places, selectedAllergens, selectedAllergenKey]);
+  }, [hydratePlaces, places, profileReady, selectedAllergens, selectedAllergenKey]);
 
   const toggleAllergen = (allergen: AllergyTag) => {
     setSelectedAllergens((current) => {
@@ -206,10 +191,76 @@ export default function Home() {
     setMapFocusPlaceId(placeId);
   };
 
-  const runPresetSearch = (preset: { query: string; label: string }) => {
-    setActiveQuickStartLabel(preset.label);
-    setQuery(preset.query);
-    void runSearch(preset.query, mapCenter, selectedAllergens, { focusTopResult: true });
+  const selectNativePlace = (place: PlaceSummary) => {
+    setPlaces((current) => [place, ...current.filter((item) => item.id !== place.id)]);
+    setSelectedPlaceId(place.id);
+    setMapFocusPlaceId(place.id);
+    setSearchTargetPlaceId(place.id);
+    setDetailStates((current) => ({ ...current, [place.id]: { status: "loading" } }));
+    const sequence = ++requestSequence.current;
+    void hydratePlaces([place], selectedAllergens, sequence);
+  };
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus("denied");
+      return;
+    }
+
+    setLocationStatus("locating");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const center = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setLocationStatus("idle");
+        setSearchCenter(center);
+        setMapCenter(center);
+        const nextQuery = query.trim() || "restaurants";
+        setQuery(nextQuery);
+        void runSearch(nextQuery, center, selectedAllergens, { focusTopResult: true });
+      },
+      () => setLocationStatus("denied"),
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  };
+
+  const refreshSelectedMenu = async () => {
+    if (!selectedPlaceId) {
+      return;
+    }
+    setRefreshingPlaceId(selectedPlaceId);
+    try {
+      const job = await refreshPlaceMenu(selectedPlaceId);
+      setMenuRefreshJobs((current) => ({ ...current, [selectedPlaceId]: job }));
+    } catch (error) {
+      setMenuRefreshJobs((current) => ({
+        ...current,
+        [selectedPlaceId]: {
+          id: `failed-${selectedPlaceId}`,
+          place_id: selectedPlaceId,
+          status: "failed",
+          message: error instanceof Error ? error.message : "Menu refresh failed.",
+          created_at: new Date().toISOString(),
+        },
+      }));
+    } finally {
+      setRefreshingPlaceId(null);
+    }
+  };
+
+  const askAboutSelectedPlace = async () => {
+    if (!selectedPlaceId || !selectedPlace) {
+      return;
+    }
+    setAskingPlaceId(selectedPlaceId);
+    try {
+      const response = await askRestaurant(selectedPlaceId, selectedPlace.name, selectedAllergens);
+      setAskResponses((current) => ({ ...current, [selectedPlaceId]: response }));
+    } finally {
+      setAskingPlaceId(null);
+    }
   };
 
   return (
@@ -223,6 +274,7 @@ export default function Home() {
           searchCenter={searchCenter}
           searchTargetPlaceId={searchTargetPlaceId}
           onPlaceSelect={selectPlace}
+          onNativePlaceSelect={selectNativePlace}
           onMapCenterChange={setMapCenter}
         />
       </div>
@@ -232,7 +284,6 @@ export default function Home() {
           query={query}
           onQueryChange={setQuery}
           onSearch={(nextQuery) => {
-            setActiveQuickStartLabel(null);
             setQuery(nextQuery);
             void runSearch(nextQuery, mapCenter, selectedAllergens, { focusTopResult: true });
           }}
@@ -240,6 +291,10 @@ export default function Home() {
           isSearching={isSearching}
         />
       </div>
+
+      <button type="button" className="location-button" onClick={useCurrentLocation}>
+        {locationStatus === "locating" ? "Locating..." : "Use my location"}
+      </button>
 
       {canSearchArea && (
         <button
@@ -252,65 +307,16 @@ export default function Home() {
       )}
 
       <div className="side-panels">
-        <section className="glass-panel results-panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-eyebrow">AllerNav Campus</p>
-              <h1>AI support for safer dining decisions around campus.</h1>
-            </div>
-            <span className="panel-stat">{hydratedCount}/{rankedPlaces.length} AI briefs ready</span>
-          </div>
-
-          <div className="hero-copy">
-            <p>
-              Pick your allergens, use a quick start, and compare nearby spots with AI scoring that reacts to your
-              selected profile.
-            </p>
-          </div>
-
-          <div className="profile-card">
-            <div className="profile-card-header">
-              <div>
-                <p className="detail-section-title">Allergy filters</p>
-                <h2 className="profile-card-title">{selectedAllergenSummary}</h2>
-              </div>
-              <span className="detail-pill">No account required</span>
-            </div>
-
-            <div className="profile-section">
-              <p className="profile-section-label">Allergens</p>
-              <AllergyProfilePicker selectedAllergens={selectedAllergens} onToggle={toggleAllergen} />
-            </div>
-          </div>
-
-          <div className="panel-subhead quick-search-panel">
-            <div>
-              <p className="detail-section-title">Campus quick starts</p>
-              <p>Jump into common campus scenarios and compare how each place scores for your selected allergens.</p>
-            </div>
-            <div className="quick-search-row">
-              {QUICK_SEARCHES.map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  className="quick-search-chip"
-                  onClick={() => runPresetSearch(preset)}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <section className="glass-panel results-panel map-drawer">
+          <details className="drawer-filter" open>
+            <summary>
+              <span>Allergies</span>
+              <strong>{selectedAllergenSummary || "None selected"}</strong>
+            </summary>
+            <AllergyProfilePicker selectedAllergens={selectedAllergens} onToggle={toggleAllergen} />
+          </details>
 
           {searchError && <p className="panel-error">{searchError}</p>}
-
-          <div className="results-section-header">
-            <div>
-              <p className="detail-section-title">Best current matches</p>
-              <p>Ranked for your allergens using reviews first, then menu snapshots when reviews are thin.</p>
-            </div>
-            <span className="detail-pill">{activeQuickStartLabel ?? "Campus scan"}</span>
-          </div>
 
           <div className="results-scroll">
             {rankedPlaces.map((place) => (
@@ -324,14 +330,26 @@ export default function Home() {
               </div>
             ))}
 
-            {!rankedPlaces.length && !searchError && <p className="empty-results">No places found for this search yet.</p>}
+            {!rankedPlaces.length && !searchError && (
+              <p className="empty-results">
+                Search for restaurants or use your location to find nearby places.
+                {locationStatus === "denied" ? " Location permission was not available." : ""}
+              </p>
+            )}
           </div>
         </section>
 
-        <section className="glass-panel details-panel">
+        {selectedPlaceId && (
+        <section className="glass-panel details-panel place-sheet">
           <TrustPanel
             place={selectedPlace}
             detailState={selectedPlaceId ? detailStates[selectedPlaceId] : undefined}
+            menuRefreshJob={selectedPlaceId ? menuRefreshJobs[selectedPlaceId] : null}
+            askResponse={selectedPlaceId ? askResponses[selectedPlaceId] : null}
+            isRefreshingMenu={refreshingPlaceId === selectedPlaceId}
+            isAskingRestaurant={askingPlaceId === selectedPlaceId}
+            onRefreshMenu={refreshSelectedMenu}
+            onAskRestaurant={askAboutSelectedPlace}
             onRetry={() => {
               if (!selectedPlaceId) {
                 return;
@@ -345,6 +363,7 @@ export default function Home() {
             }}
           />
         </section>
+        )}
       </div>
     </main>
   );

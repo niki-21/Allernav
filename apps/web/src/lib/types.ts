@@ -70,6 +70,23 @@ export interface ReviewEvidence {
   publish_time?: string | null;
 }
 
+export interface PlaceReviewSnippet {
+  review_id: string;
+  author_name?: string | null;
+  rating?: number | null;
+  text: string;
+  publish_time?: string | null;
+  relative_publish_time?: string | null;
+}
+
+export interface PlacePhoto {
+  name: string;
+  url: string;
+  width_px?: number | null;
+  height_px?: number | null;
+  author_names: string[];
+}
+
 export interface MenuItem {
   name: string;
   description?: string | null;
@@ -94,6 +111,22 @@ export interface RecommendedMenuItem {
   reason: string;
   caution?: string | null;
   source: "heuristic" | "llm";
+}
+
+export interface MenuRefreshJob {
+  id: string;
+  place_id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  message: string;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface AskRestaurantResponse {
+  id: string;
+  status: "queued" | "sent" | "failed";
+  message: string;
+  suggested_script: string;
 }
 
 export interface PlaceDecisionBrief {
@@ -126,6 +159,8 @@ export interface PlaceDetailsResponse extends PlaceSummary {
   selected_allergens: AllergyTag[];
   score_summary: PlaceScoreSummary;
   evidence: ReviewEvidence[];
+  review_snippets: PlaceReviewSnippet[];
+  photos: PlacePhoto[];
   explanation: string;
   decision_brief: PlaceDecisionBrief;
   menu: PlaceMenu | null;

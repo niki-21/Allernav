@@ -1,6 +1,6 @@
-import type { AllergyTag, LatLng, PlaceDetailsResponse, SearchResponse } from "./types";
+import type { AllergyTag, AskRestaurantResponse, LatLng, MenuRefreshJob, PlaceDetailsResponse, SearchResponse } from "./types";
 
-const API_PREFIX = "/api";
+const API_PREFIX = (process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "") + "/api";
 
 export function buildSearchPayload(query: string, center: LatLng, allergens: AllergyTag[]) {
   return {
@@ -40,4 +40,36 @@ export async function fetchPlaceDetails(placeId: string, allergens: AllergyTag[]
   }
 
   return (await response.json()) as PlaceDetailsResponse;
+}
+
+export async function refreshPlaceMenu(placeId: string): Promise<MenuRefreshJob> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu-refresh`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as MenuRefreshJob;
+}
+
+export async function askRestaurant(
+  placeId: string,
+  placeName: string,
+  allergens: AllergyTag[],
+): Promise<AskRestaurantResponse> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/ask`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      place_id: placeId,
+      place_name: placeName,
+      allergens,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as AskRestaurantResponse;
 }
