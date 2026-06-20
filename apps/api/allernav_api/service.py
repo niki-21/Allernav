@@ -55,6 +55,15 @@ async def get_place_details_service(
     selected_allergens = allergens or [AllergyTag.PEANUT]
     place = client.get_place_details(place_id)
     summary, evidence, explanation = analyze_place(place, selected_allergens)
+    menu_source = load_menu_source(place["id"])
+    if menu_source is None and place.get("website_uri"):
+        ingested_source = ingest_menu_from_website(
+            restaurant_id=place["id"],
+            restaurant_name=place["name"],
+            website_url=place["website_uri"],
+        )
+        menu_source = ingested_source if ingested_source.sections else None
+    menu = load_place_menu(place["id"]) if menu_source else None
     if not summary.fit_score:
         summary.fit_score = summary.score
     if summary.fit_verdict is None:
@@ -64,8 +73,6 @@ async def get_place_details_service(
     summary.meaningful_evidence = summary.evidence_count > 0
     summary.evidence_status = "meaningful" if summary.meaningful_evidence else "limited"
     summary.evidence_summary = "Allergy-specific evidence found" if summary.meaningful_evidence else "Not enough allergy-specific evidence"
-    stored_menu_source = load_menu_source(place["id"])
-    place_menu = load_place_menu(place["id"])
     agent_recommendation = run_dining_safety_graph(
         profile=AllergyProfile(allergens=selected_allergens),
         restaurant_id=place["id"],
@@ -74,7 +81,7 @@ async def get_place_details_service(
             restaurant_id=place["id"],
             restaurant_name=place["name"],
             website_url=place.get("website_uri"),
-            menu_sources=[stored_menu_source] if stored_menu_source else [],
+            menu_sources=[menu_source] if menu_source else [],
         ),
     )
 
@@ -88,7 +95,14 @@ async def get_place_details_service(
         primary_type=place.get("primary_type"),
         website_uri=place.get("website_uri"),
         editorial_summary=place.get("editorial_summary"),
-        google_maps_uri=(
+        national_phone_number=place.get("national_phone_number"),
+        international_phone_number=place.get("international_phone_number"),
+        price_level=place.get("price_level"),
+        price_range=place.get("price_range"),
+        regular_opening_hours=place.get("regular_opening_hours"),
+        current_opening_hours=place.get("current_opening_hours"),
+        service_options=place.get("service_options") or {},
+        google_maps_uri=place.get("google_maps_uri") or (
             "https://www.google.com/maps/search/?api=1"
             f"&query={place['name']}"
             f"&query_place_id={place['id']}"
@@ -97,8 +111,21 @@ async def get_place_details_service(
         selected_allergens=selected_allergens,
         score_summary=summary,
         evidence=evidence,
+        review_snippets=[
+            {
+                "review_id": review["review_id"],
+                "author_name": review.get("author_name"),
+                "rating": review.get("rating"),
+                "text": review.get("text", ""),
+                "publish_time": review.get("publish_time"),
+                "relative_publish_time": review.get("relative_publish_time"),
+            }
+            for review in place.get("reviews", [])
+            if review.get("text")
+        ][:5],
+        photos=place.get("photos", []),
         explanation=explanation,
-        menu=place_menu if place_menu.status == "complete" else None,
+        menu=menu if menu and menu.sections else None,
         agent_recommendation=agent_recommendation,
     )
 
@@ -127,9 +154,9 @@ async def create_menu_refresh_job(
             id=str(uuid4()),
             place_id=place_id,
             status="failed",
-            message="Menu refresh needs a restaurant website URL before official menu ingestion can run.",
+            message="No restaurant website was available for official menu ingestion.",
             created_at=now,
-            completed_at=datetime.now(UTC).isoformat(),
+            completed_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
         return job
@@ -139,17 +166,18 @@ async def create_menu_refresh_job(
         restaurant_name=resolved_name,
         website_url=resolved_url,
     )
-    status = "complete" if source.sections else "failed"
     item_count = sum(len(section.items) for section in source.sections)
+    status = "complete" if item_count else "failed"
+    message = (
+        f"Captured {item_count} menu item{'s' if item_count != 1 else ''} from {source.source_url}."
+        if item_count
+        else "No reliable dish-level menu items were extracted from the restaurant website or linked documents."
+    )
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
         status=status,
-        message=(
-            f"Menu refresh complete. Captured {item_count} menu item{'' if item_count == 1 else 's'} from {source.source_url}."
-            if item_count
-            else "Menu refresh ran, but no structured official menu items were extracted."
-        ),
+        message=message,
         created_at=now,
         completed_at=datetime.now(UTC).isoformat(),
     )

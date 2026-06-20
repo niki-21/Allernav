@@ -1436,6 +1436,7 @@ body {
 }
 
 .overview-line p,
+.about-row p,
 .menu-source-row p,
 .empty-menu-state p,
 .menu-list-item p,
@@ -1443,6 +1444,35 @@ body {
   color: #5f6368;
   font-size: 0.95rem;
   line-height: 1.45;
+}
+
+.service-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(60, 64, 67, 0.1);
+}
+
+.service-chip-row span {
+  border-radius: 999px;
+  background: #e6f4ea;
+  color: #137333;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 7px 10px;
+}
+
+.about-row {
+  display: grid;
+  gap: 5px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(60, 64, 67, 0.1);
+}
+
+.about-row strong {
+  color: #202124;
+  font-weight: 700;
 }
 
 .menu-source-row {

@@ -107,6 +107,23 @@ class GooglePlacesClient:
                 "primaryType",
                 "editorialSummary",
                 "reviews",
+                "photos",
+                "googleMapsUri",
+                "nationalPhoneNumber",
+                "internationalPhoneNumber",
+                "priceLevel",
+                "priceRange",
+                "regularOpeningHours",
+                "currentOpeningHours",
+                "takeout",
+                "delivery",
+                "dineIn",
+                "reservable",
+                "servesBreakfast",
+                "servesBrunch",
+                "servesLunch",
+                "servesDinner",
+                "servesVegetarianFood",
             ]
         )
         payload = self._request_json(
@@ -176,6 +193,23 @@ class GooglePlacesClient:
                     "relative_publish_time": review.get("relativePublishTimeDescription"),
                 }
             )
+        photos = []
+        for photo in place.get("photos", [])[:6]:
+            if not isinstance(photo, dict) or not isinstance(photo.get("name"), str):
+                continue
+            author_names = []
+            for author in photo.get("authorAttributions", []):
+                if isinstance(author, dict) and isinstance(author.get("displayName"), str):
+                    author_names.append(author["displayName"])
+            photos.append(
+                {
+                    "name": photo["name"],
+                    "url": f"/api/place-photo?name={parse.quote(photo['name'])}&maxWidthPx=900",
+                    "width_px": photo.get("widthPx"),
+                    "height_px": photo.get("heightPx"),
+                    "author_names": author_names,
+                }
+            )
 
         return {
             "id": place["id"],
@@ -190,6 +224,45 @@ class GooglePlacesClient:
             "website_uri": place.get("websiteUri"),
             "primary_type": place.get("primaryType"),
             "editorial_summary": ((place.get("editorialSummary") or {}).get("text")),
+            "national_phone_number": place.get("nationalPhoneNumber"),
+            "international_phone_number": place.get("internationalPhoneNumber"),
+            "price_level": place.get("priceLevel"),
+            "price_range": format_price_range(place.get("priceRange")),
+            "regular_opening_hours": place.get("regularOpeningHours"),
+            "current_opening_hours": place.get("currentOpeningHours"),
+            "google_maps_uri": place.get("googleMapsUri"),
+            "service_options": {
+                "takeout": place.get("takeout"),
+                "delivery": place.get("delivery"),
+                "dine_in": place.get("dineIn"),
+                "reservable": place.get("reservable"),
+                "serves_breakfast": place.get("servesBreakfast"),
+                "serves_brunch": place.get("servesBrunch"),
+                "serves_lunch": place.get("servesLunch"),
+                "serves_dinner": place.get("servesDinner"),
+                "serves_vegetarian_food": place.get("servesVegetarianFood"),
+            },
             "reviews": reviews,
+            "photos": photos,
         }
 
+
+def format_price_range(price_range: Any) -> str | None:
+    if not isinstance(price_range, dict):
+        return None
+    start = format_money(price_range.get("startPrice"))
+    end = format_money(price_range.get("endPrice"))
+    if start and end:
+        return f"{start}-{end}"
+    return start or end
+
+
+def format_money(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    units = value.get("units")
+    currency = value.get("currencyCode")
+    if units is None:
+        return None
+    prefix = "$" if currency == "USD" else f"{currency or ''} "
+    return f"{prefix}{units}".strip()

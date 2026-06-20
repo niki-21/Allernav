@@ -137,3 +137,31 @@ export async function fetchBackendPlaceMenu(placeId: string): Promise<PlaceMenu 
     return null;
   }
 }
+
+export async function refreshBackendPlaceMenu(
+  placeId: string,
+  context: RefreshMenuContext = {},
+): Promise<PlaceMenu | null> {
+  const url = buildFastApiUrl(`/api/places/${encodeURIComponent(placeId)}/menu-refresh`);
+  if (!url) {
+    return null;
+  }
+
+  const refreshUrl = new URL(url);
+  if (context.restaurantName) {
+    refreshUrl.searchParams.set("restaurant_name", context.restaurantName);
+  }
+  if (context.websiteUrl) {
+    refreshUrl.searchParams.set("website_url", context.websiteUrl);
+  }
+
+  try {
+    const response = await fetch(refreshUrl, { method: "POST", cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    return await fetchBackendPlaceMenu(placeId);
+  } catch {
+    return null;
+  }
+}

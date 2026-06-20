@@ -52,8 +52,38 @@ interface GooglePlacesApiPlace {
   primaryType?: string;
   websiteUri?: string;
   editorialSummary?: GoogleLocalizedText;
+  googleMapsUri?: string;
+  nationalPhoneNumber?: string;
+  internationalPhoneNumber?: string;
+  priceLevel?: string;
+  priceRange?: {
+    startPrice?: GoogleMoney;
+    endPrice?: GoogleMoney;
+  };
+  regularOpeningHours?: GoogleOpeningHours;
+  currentOpeningHours?: GoogleOpeningHours;
+  takeout?: boolean;
+  delivery?: boolean;
+  dineIn?: boolean;
+  reservable?: boolean;
+  servesBreakfast?: boolean;
+  servesBrunch?: boolean;
+  servesLunch?: boolean;
+  servesDinner?: boolean;
+  servesVegetarianFood?: boolean;
   reviews?: GooglePlacesApiReview[];
   photos?: GooglePlacesApiPhoto[];
+}
+
+interface GoogleMoney {
+  currencyCode?: string;
+  units?: string | number;
+  nanos?: number;
+}
+
+interface GoogleOpeningHours {
+  openNow?: boolean;
+  weekdayDescriptions?: string[];
 }
 
 export interface GooglePlaceReview {
@@ -75,6 +105,14 @@ export interface GooglePlacePhoto {
 export interface GooglePlaceDetails extends PlaceSummary {
   website_uri?: string | null;
   editorial_summary?: string | null;
+  google_maps_uri?: string | null;
+  national_phone_number?: string | null;
+  international_phone_number?: string | null;
+  price_level?: string | null;
+  price_range?: string | null;
+  regular_opening_hours?: GoogleOpeningHours | null;
+  current_opening_hours?: GoogleOpeningHours | null;
+  service_options?: Record<string, boolean | null | undefined>;
   reviews: GooglePlaceReview[];
   photos: GooglePlacePhoto[];
 }
@@ -129,7 +167,7 @@ function parsePlaceSummary(place: GooglePlacesApiPlace): PlaceSummary {
   const location = place.location ?? {};
 
   return {
-    id: place.id,
+    id: place.id ?? "",
     name: place.displayName?.text ?? "Unknown place",
     address: place.formattedAddress ?? null,
     location: {
@@ -148,7 +186,7 @@ function parsePlaceDetails(place: GooglePlacesApiPlace): GooglePlaceDetails {
   const photos = Array.isArray(place.photos) ? place.photos : [];
 
   return {
-    id: place.id,
+    id: place.id ?? "",
     name: place.displayName?.text ?? "Unknown place",
     address: place.formattedAddress ?? null,
     location: {
@@ -160,6 +198,24 @@ function parsePlaceDetails(place: GooglePlacesApiPlace): GooglePlaceDetails {
     primary_type: place.primaryType ?? null,
     website_uri: place.websiteUri ?? null,
     editorial_summary: place.editorialSummary?.text ?? null,
+    google_maps_uri: place.googleMapsUri ?? null,
+    national_phone_number: place.nationalPhoneNumber ?? null,
+    international_phone_number: place.internationalPhoneNumber ?? null,
+    price_level: place.priceLevel ?? null,
+    price_range: formatPriceRange(place.priceRange),
+    regular_opening_hours: place.regularOpeningHours ?? null,
+    current_opening_hours: place.currentOpeningHours ?? null,
+    service_options: {
+      takeout: place.takeout,
+      delivery: place.delivery,
+      dine_in: place.dineIn,
+      reservable: place.reservable,
+      serves_breakfast: place.servesBreakfast,
+      serves_brunch: place.servesBrunch,
+      serves_lunch: place.servesLunch,
+      serves_dinner: place.servesDinner,
+      serves_vegetarian_food: place.servesVegetarianFood,
+    },
     photos: photos
       .filter((photo) => typeof photo.name === "string")
       .slice(0, 6)
@@ -186,6 +242,23 @@ function parsePlaceDetails(place: GooglePlacesApiPlace): GooglePlaceDetails {
       };
     }),
   };
+}
+
+function formatMoney(value: GoogleMoney | undefined): string | null {
+  if (!value || typeof value.units === "undefined") {
+    return null;
+  }
+  const prefix = value.currencyCode === "USD" ? "$" : value.currencyCode ? `${value.currencyCode} ` : "";
+  return `${prefix}${value.units}`;
+}
+
+function formatPriceRange(value: GooglePlacesApiPlace["priceRange"]): string | null {
+  const start = formatMoney(value?.startPrice);
+  const end = formatMoney(value?.endPrice);
+  if (start && end) {
+    return `${start}-${end}`;
+  }
+  return start ?? end;
 }
 
 export class GooglePlacesClient {
@@ -261,6 +334,22 @@ export class GooglePlacesClient {
         "websiteUri",
         "primaryType",
         "editorialSummary",
+        "googleMapsUri",
+        "nationalPhoneNumber",
+        "internationalPhoneNumber",
+        "priceLevel",
+        "priceRange",
+        "regularOpeningHours",
+        "currentOpeningHours",
+        "takeout",
+        "delivery",
+        "dineIn",
+        "reservable",
+        "servesBreakfast",
+        "servesBrunch",
+        "servesLunch",
+        "servesDinner",
+        "servesVegetarianFood",
         "reviews",
         "photos",
       ].join(","),

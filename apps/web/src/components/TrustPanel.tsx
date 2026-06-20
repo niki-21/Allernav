@@ -1,19 +1,15 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 
-import type { AskRestaurantResponse, MenuRefreshJob, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type { AskRestaurantResponse, PlaceDetailsResponse, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
 interface TrustPanelProps {
   place: PlaceSummary | null;
   detailState: PlaceDetailState | undefined;
   onRetry: () => void;
-  onRefreshMenu: () => void;
   onAskRestaurant: () => void;
-  menuRefreshJob?: MenuRefreshJob | null;
   askResponse?: AskRestaurantResponse | null;
-  isRefreshingMenu?: boolean;
   isAskingRestaurant?: boolean;
 }
 
@@ -23,21 +19,57 @@ function formatRiskLabel(value: string): string {
   return value.replace(/_/g, " ");
 }
 
+function formatPlaceType(value?: string | null): string {
+  if (!value) {
+    return "Restaurant";
+  }
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatOpenStatus(data: PlaceDetailsResponse): string | null {
+  const hours = data.current_opening_hours ?? data.regular_opening_hours;
+  if (!hours || typeof hours.openNow !== "boolean") {
+    return null;
+  }
+  return hours.openNow ? "Open now" : "Closed now";
+}
+
+function serviceLabels(options: Record<string, boolean | null | undefined> | undefined): string[] {
+  const labels: Array<[string, string]> = [
+    ["dine_in", "Dine-in"],
+    ["takeout", "Takeout"],
+    ["delivery", "Delivery"],
+    ["reservable", "Reservations"],
+    ["serves_lunch", "Lunch"],
+    ["serves_dinner", "Dinner"],
+    ["serves_vegetarian_food", "Vegetarian options"],
+  ];
+  return labels.filter(([key]) => options?.[key] === true).map(([, label]) => label);
+}
+
+function displayHostName(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 export default function TrustPanel({
   place,
   detailState,
   onRetry,
-  onRefreshMenu,
   onAskRestaurant,
-  menuRefreshJob,
   askResponse,
-  isRefreshingMenu = false,
   isAskingRestaurant = false,
 }: TrustPanelProps) {
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
     tab: "overview",
   });
+  const [failedPhotoNames, setFailedPhotoNames] = useState<Set<string>>(() => new Set());
 
   if (!place) {
     return (
@@ -81,7 +113,7 @@ export default function TrustPanel({
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
   const reviewSnippets = data.review_snippets ?? [];
-  const photos = data.photos ?? [];
+  const photos = (data.photos ?? []).filter((photo) => !failedPhotoNames.has(photo.name));
   const reviewSignalCount = data.evidence.length;
   const signalSource =
     reviewSignalCount > 0 && data.menu
@@ -94,28 +126,32 @@ export default function TrustPanel({
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
   const agentRecommendation = data.agent_recommendation ?? null;
   const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
-  const menuStatus = isRefreshingMenu ? "running" : menuRefreshJob?.status;
-  const refreshLabel =
-    menuStatus === "queued"
-      ? "Queued"
-      : menuStatus === "running"
-        ? "Scanning"
-        : menuStatus === "complete"
-          ? "Re-scan source"
-          : "Re-scan menu source";
+  const openStatus = formatOpenStatus(data);
+  const services = serviceLabels(data.service_options);
+  const ratingLine = [
+    data.rating ? `${data.rating.toFixed(1)} on Google` : null,
+    data.user_rating_count ? `${data.user_rating_count.toLocaleString()} reviews` : null,
+    data.price_range ?? data.price_level?.replace("PRICE_LEVEL_", "").replace(/_/g, " ").toLowerCase() ?? null,
+    formatPlaceType(data.primary_type),
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="trust-panel-content">
       {photos.length > 0 && (
         <div className="place-photo-strip" aria-label="Place photos">
           {photos.slice(0, 4).map((photo, index) => (
-            <Image
+            <img
               key={photo.name}
               src={photo.url}
               alt={`${data.name} photo ${index + 1}`}
-              width={180}
-              height={96}
               loading="lazy"
+              onError={() =>
+                setFailedPhotoNames((current) => {
+                  const next = new Set(current);
+                  next.add(photo.name);
+                  return next;
+                })
+              }
             />
           ))}
         </div>
@@ -125,6 +161,7 @@ export default function TrustPanel({
         <p className="panel-eyebrow">Place details</p>
         <h2>{data.name}</h2>
         <p>{data.address ?? "Address unavailable"}</p>
+        {ratingLine && <p>{ratingLine}</p>}
         <p className="compact-score-row">
           Allergy fit {data.score_summary.fit_score} · {confidencePercent}% confidence · verify before ordering
         </p>
@@ -134,10 +171,11 @@ export default function TrustPanel({
         <a className="detail-link google-link" href={data.google_maps_uri} target="_blank" rel="noreferrer">
           View on Google Maps
         </a>
-        <button type="button" className="detail-link" onClick={onRefreshMenu} disabled={isRefreshingMenu}>
-          <span className={isRefreshingMenu ? "refresh-spinner active" : "refresh-spinner"} />
-          {refreshLabel}
-        </button>
+        {data.website_uri && (
+          <a className="detail-link" href={data.website_uri} target="_blank" rel="noreferrer">
+            Website
+          </a>
+        )}
       </div>
 
       <div className="place-tabs" role="tablist" aria-label="Place information">
@@ -158,7 +196,18 @@ export default function TrustPanel({
       {activeTab === "overview" && (
         <div className="place-tab-panel">
           <div className="overview-line">
-            <strong>{data.decision_brief.headline}</strong>
+            <strong>{openStatus ?? data.decision_brief.headline}</strong>
+            <p>{data.editorial_summary ?? data.decision_brief.summary}</p>
+          </div>
+          {services.length > 0 && (
+            <div className="service-chip-row" aria-label="Service options">
+              {services.slice(0, 5).map((service) => (
+                <span key={service}>{service}</span>
+              ))}
+            </div>
+          )}
+          <div className="overview-line">
+            <strong>Allergy read</strong>
             <p>{data.decision_brief.summary}</p>
           </div>
           {agentRecommendation && (
@@ -194,10 +243,9 @@ export default function TrustPanel({
             <p>
               {menuItemCount > 0
                 ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} captured from ${data.menu?.source_url ?? "available sources"}.`
-                : "AllerNav checks official menu sources when a restaurant website is available. Re-scan only if the source looks stale or incomplete."}
+                : "No reliable dish-level menu evidence is captured yet. AllerNav checks official website, linked PDF, and image menu sources when available."}
             </p>
           </div>
-          {menuRefreshJob && <p className="menu-job-note">{menuRefreshJob.message}</p>}
         </div>
       )}
 
@@ -218,9 +266,6 @@ export default function TrustPanel({
               </a>
             )}
           </div>
-
-          {menuRefreshJob && <p className="menu-job-note">{menuRefreshJob.message}</p>}
-
           {menuSections.length > 0 ? (
             <div className="menu-section-list google-menu-list">
               {menuSections.slice(0, 3).map((section) => (
@@ -247,10 +292,10 @@ export default function TrustPanel({
             </div>
           ) : (
             <article className="empty-menu-state">
-              <strong>Get menu information</strong>
+              <strong>No dish-level menu captured</strong>
               <p>
-                AllerNav checks compliant public sources for the selected restaurant: the restaurant website, linked menu
-                or ordering pages, PDFs, and accessible menu images. Re-scan if the source looks stale or incomplete.
+                Official menu pages, PDFs, and accessible menu images are checked when available. If extraction is too
+                weak or only returns hours/events, AllerNav keeps this as insufficient evidence.
               </p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
@@ -303,6 +348,10 @@ export default function TrustPanel({
 
           <div className="review-group">
             <strong>Allergy evidence</strong>
+            <p className="panel-note">
+              Google returns a limited set of review snippets. AllerNav scans those snippets for allergy terms and keeps
+              reviews as warning context, not proof that a dish is lower risk.
+            </p>
             <div className="evidence-list compact">
               {data.evidence.length === 0 && (
                 <article className="evidence-item empty">
@@ -353,7 +402,7 @@ export default function TrustPanel({
           )}
 
           <div className="review-group">
-            <strong>Recent Google reviews</strong>
+            <strong>Google review snippets</strong>
             <div className="evidence-list compact">
               {reviewSnippets.length === 0 && (
                 <article className="evidence-item empty">
@@ -378,20 +427,43 @@ export default function TrustPanel({
 
       {activeTab === "about" && (
         <div className="place-tab-panel">
-          <div className="overview-line">
-            <strong>Allergy read</strong>
-            <p>{data.score_summary.evidence_summary}</p>
-          </div>
-          <div className="overview-line">
-            <strong>Confidence</strong>
-            <p>{confidencePercent}% · {signalSource}</p>
-          </div>
-          <div className="overview-line">
+          {data.address && (
+            <div className="about-row">
+              <strong>Address</strong>
+              <p>{data.address}</p>
+            </div>
+          )}
+          {openStatus && (
+            <div className="about-row">
+              <strong>Hours</strong>
+              <p>{openStatus}</p>
+              {(data.current_opening_hours?.weekdayDescriptions ?? data.regular_opening_hours?.weekdayDescriptions ?? [])
+                .slice(0, 7)
+                .map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+            </div>
+          )}
+          {(data.national_phone_number || data.international_phone_number) && (
+            <div className="about-row">
+              <strong>Phone</strong>
+              <p>{data.national_phone_number ?? data.international_phone_number}</p>
+            </div>
+          )}
+          {data.website_uri && (
+            <div className="about-row">
+              <strong>Website</strong>
+              <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
+                {displayHostName(data.website_uri)}
+              </a>
+            </div>
+          )}
+          <div className="about-row">
             <strong>Safety note</strong>
             <p>Use inferred information cautiously and verify ingredients, prep surfaces, and cross-contact before ordering.</p>
           </div>
           {agentRecommendation && (
-            <div className="overview-line">
+            <div className="about-row">
               <strong>Agent trace</strong>
               <p>{agentRecommendation.trace.nodes.join(" -> ")}</p>
             </div>

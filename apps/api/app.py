@@ -25,9 +25,9 @@ from allernav_api.models import (
     PlaceMenu,
     RecommendationResult,
     RecommendDishesRequest,
+    SearchIndexResponse,
     SearchRequest,
     SearchResponse,
-    SearchIndexResponse,
     UserProfileResponse,
 )
 from allernav_api.agent_service import (
@@ -150,6 +150,19 @@ async def restaurant_evidence_endpoint(restaurant_id: str) -> list[EvidenceFragm
     return await restaurant_evidence_service(restaurant_id)
 
 
+@app.post("/restaurants/{restaurant_id}/search-index", response_model=SearchIndexResponse)
+@app.post("/api/restaurants/{restaurant_id}/search-index", response_model=SearchIndexResponse)
+async def restaurant_search_index_endpoint(restaurant_id: str) -> SearchIndexResponse:
+    return await index_restaurant_menu_service(restaurant_id)
+
+
+@app.post("/hybrid-search", response_model=HybridSearchResponse)
+@app.post("/api/hybrid-search", response_model=HybridSearchResponse)
+@app.post("/api/search/hybrid", response_model=HybridSearchResponse)
+async def hybrid_search_endpoint(payload: HybridSearchRequest) -> HybridSearchResponse:
+    return await hybrid_search_service(payload)
+
+
 @app.get("/api/places/{place_id}", response_model=PlaceDetailsResponse)
 async def place_details_endpoint(
     place_id: str,
@@ -178,16 +191,6 @@ async def menu_refresh_endpoint(
         return await create_menu_refresh_job(place_id, restaurant_name, website_url, client)
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@app.post("/api/restaurants/{restaurant_id}/search-index", response_model=SearchIndexResponse)
-async def restaurant_search_index_endpoint(restaurant_id: str) -> SearchIndexResponse:
-    return await index_restaurant_menu_service(restaurant_id)
-
-
-@app.post("/api/search/hybrid", response_model=HybridSearchResponse)
-async def hybrid_search_endpoint(payload: HybridSearchRequest) -> HybridSearchResponse:
-    return await hybrid_search_service(payload)
 
 
 @app.post("/api/places/{place_id}/ask", response_model=AskRestaurantResponse)

@@ -90,6 +90,11 @@ export interface PlacePhoto {
   author_names: string[];
 }
 
+export interface PlaceOpeningHours {
+  openNow?: boolean | null;
+  weekdayDescriptions?: string[];
+}
+
 export interface MenuItem {
   name: string;
   description?: string | null;
@@ -200,6 +205,13 @@ export interface AgentRecommendationResult {
 export interface PlaceDetailsResponse extends PlaceSummary {
   website_uri?: string | null;
   editorial_summary?: string | null;
+  national_phone_number?: string | null;
+  international_phone_number?: string | null;
+  price_level?: string | null;
+  price_range?: string | null;
+  regular_opening_hours?: PlaceOpeningHours | null;
+  current_opening_hours?: PlaceOpeningHours | null;
+  service_options?: Record<string, boolean | null | undefined>;
   google_maps_uri: string;
   google_review_uri: string;
   selected_allergens: AllergyTag[];

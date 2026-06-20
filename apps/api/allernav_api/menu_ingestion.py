@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+from . import supabase_store
 from .document_intelligence import (
     DocumentExtraction,
     document_content_type,
@@ -67,6 +68,22 @@ SCHEDULE_WORDS = {
     "market",
 }
 
+BEVERAGE_ONLY_WORDS = {
+    "beer",
+    "wine",
+    "cocktail",
+    "cocktails",
+    "drink",
+    "drinks",
+    "soda",
+    "coffee",
+    "tea",
+    "spezi",
+    "lager",
+    "ale",
+    "ipa",
+    "pilsner",
+}
 
 def default_db_path() -> Path:
     configured = os.getenv("ALLERNAV_MENU_DB")
@@ -107,6 +124,13 @@ def save_menu_source(
     db_path: Path | None = None,
 ) -> None:
     fetched_at = source.source_timestamp or datetime.now(UTC).isoformat()
+    supabase_store.save_menu_source(
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        source=source,
+        status=status,
+        error_message=error_message,
+    )
     with connect(db_path) as connection:
         connection.execute(
             """
@@ -140,6 +164,18 @@ def save_menu_source(
 
 
 def load_menu_record(restaurant_id: str, db_path: Path | None = None) -> tuple[str | None, MenuSource] | None:
+    supabase_record = supabase_store.load_menu_source(restaurant_id)
+    if supabase_record:
+        restaurant_name, source = supabase_record
+        sanitized_sections = sanitize_sections(source.sections)
+        if sanitized_sections:
+            return restaurant_name, source.model_copy(
+                update={
+                    "sections": sanitized_sections,
+                    "raw_text": summarize_menu_text(sanitized_sections) or None,
+                }
+            )
+
     with connect(db_path) as connection:
         row = connection.execute(
             "SELECT restaurant_name, menu_json, status FROM menu_records WHERE restaurant_id = ?",
@@ -389,7 +425,7 @@ def extract_candidate_menu_urls(html_text: str, base_url: str) -> list[str]:
         text = html_to_text(label).lower()
         target = href.lower()
         absolute = absolute_url(href, base_url)
-        if not re.search(r"menu|food|order", f"{target} {text}") and not looks_like_document_url(absolute):
+        if not re.search(r"menu|food|dinner|lunch|brunch|order", f"{target} {text}") and not looks_like_document_url(absolute):
             continue
         if absolute and absolute not in urls:
             urls.append(absolute)
@@ -480,11 +516,52 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_schedule_or_event_text(name, description):
         return False
-    if not looks_like_food_text(combined):
-        return False
     if len([term for term in terms if term]) <= 1 and not description:
         return False
-    return True
+    return menu_item_quality_score(name, description) >= 3
+
+
+def menu_item_quality_score(name: str, description: str | None = None) -> int:
+    normalized = name.lower()
+    description_normalized = (description or "").lower()
+    combined = f"{normalized} {description_normalized}"
+    terms = [term for term in re.split(r"[^a-z0-9]+", normalized) if term]
+    score = 0
+
+    if 2 <= len(terms) <= 7:
+        score += 1
+    if description and 8 <= len(description) <= 180:
+        score += 2
+    if looks_like_food_text(combined):
+        score += 2
+    if re.search(r"\$\d|\b\d{1,3}\.\d{2}\b", combined):
+        score += 1
+    if re.search(r"\b(with|served|over|topped|sauce|contains|ingredient|ingredients)\b", combined):
+        score += 1
+    if re.search(r"\b(menu|plate|bowl|sandwich|salad|roll|taco|burger|pizza|pasta|noodle|soup|entree)\b", combined):
+        score += 1
+
+    if is_beverage_only(name, description):
+        score -= 3
+    if re.search(r"\b(hours?|open|closed|event|events|calendar|reservation|book|order online|located)\b", combined):
+        score -= 3
+    if re.search(r"\b(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", combined):
+        score -= 2
+    return score
+
+
+def is_beverage_only(name: str, description: str | None = None) -> bool:
+    text = f"{name} {description or ''}".lower()
+    tokens = set(re.split(r"[^a-z0-9]+", text))
+    has_beverage = any(word in tokens for word in BEVERAGE_ONLY_WORDS)
+    if not has_beverage:
+        return False
+    food_without_beverage = re.sub(
+        r"\b(beer|wine|cocktails?|drinks?|drink|soda|coffee|tea|spezi|lager|ale|ipa|pilsner|soft)\b",
+        " ",
+        text,
+    )
+    return not looks_like_food_text(food_without_beverage)
 
 
 def looks_like_schedule_or_event_text(name: str, description: str | None = None) -> bool:
@@ -508,7 +585,8 @@ def looks_like_food_text(text: str) -> bool:
             r"rice|bowl|noodle|noodles|pasta|sauce|sandwich|salad|roll|taco|burger|pizza|"
             r"chicken|beef|pork|fish|salmon|tuna|shrimp|crab|tofu|egg|cheese|cream|"
             r"sesame|peanut|soy|bread|flour|vegetable|tomato|greens|beans|soup|"
-            r"cake|dessert|cookie|fries|fried|grilled|roasted|steamed|spicy"
+            r"cake|dessert|cookie|fries|fried|grilled|roasted|steamed|spicy|"
+            r"dumpling|curry|kebab|falafel|hummus|gyro|steak|rib|wings|sausage"
             r")\b",
             text,
         )

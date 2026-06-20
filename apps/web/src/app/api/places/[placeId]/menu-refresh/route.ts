@@ -14,22 +14,26 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
       id: `failed-${placeId}`,
       place_id: placeId,
       status: "failed",
-      message: "FastAPI menu ingestion is not configured. Set FASTAPI_API_BASE_URL to enable menu refresh.",
+      message: "FastAPI menu ingestion is not configured. Set FASTAPI_API_BASE_URL to enable menu ingestion.",
       created_at: now,
       completed_at: now,
     });
   }
 
+  const incomingUrl = new URL(request.url);
   const payload = (await request.json().catch(() => ({}))) as {
     restaurant_name?: string | null;
     website_url?: string | null;
   };
   const url = new URL(backendUrl);
-  if (payload.restaurant_name) {
-    url.searchParams.set("restaurant_name", payload.restaurant_name);
+  const restaurantName = payload.restaurant_name ?? incomingUrl.searchParams.get("restaurant_name");
+  const websiteUrl = payload.website_url ?? incomingUrl.searchParams.get("website_url");
+
+  if (restaurantName) {
+    url.searchParams.set("restaurant_name", restaurantName);
   }
-  if (payload.website_url) {
-    url.searchParams.set("website_url", payload.website_url);
+  if (websiteUrl) {
+    url.searchParams.set("website_url", websiteUrl);
   }
 
   try {
@@ -40,7 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
     const body = await response.json().catch(() => null);
     if (!response.ok) {
       return NextResponse.json(
-        body ?? { detail: "FastAPI menu refresh failed." },
+        body ?? { detail: "FastAPI menu ingestion failed." },
         { status: response.status },
       );
     }
@@ -51,7 +55,7 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
         id: `failed-${placeId}`,
         place_id: placeId,
         status: "failed",
-        message: error instanceof Error ? error.message : "FastAPI menu refresh failed.",
+        message: error instanceof Error ? error.message : "FastAPI menu ingestion failed.",
         created_at: now,
         completed_at: now,
       },
