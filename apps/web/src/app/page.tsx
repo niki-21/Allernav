@@ -38,6 +38,7 @@ export default function Home() {
   const [askingPlaceId, setAskingPlaceId] = useState<string | null>(null);
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
+  const autoMenuRefreshAttempts = useRef<Set<string>>(new Set());
   const requestSequence = useRef(0);
   const [profileReady, setProfileReady] = useState(false);
 
@@ -226,7 +227,7 @@ export default function Home() {
     );
   };
 
-  const refreshSelectedMenu = async () => {
+  const refreshSelectedMenu = useCallback(async (mode: "auto" | "manual" = "manual") => {
     if (!selectedPlaceId || !selectedPlace) {
       return;
     }
@@ -234,6 +235,18 @@ export default function Home() {
     try {
       const detailState = detailStates[selectedPlaceId];
       const selectedDetails = detailState?.status === "ready" ? detailState.data : null;
+      if (mode === "auto") {
+        setMenuRefreshJobs((current) => ({
+          ...current,
+          [selectedPlaceId]: {
+            id: `auto-${selectedPlaceId}`,
+            place_id: selectedPlaceId,
+            status: "running",
+            message: "Checking official menu sources for this place.",
+            created_at: new Date().toISOString(),
+          },
+        }));
+      }
       const job = await refreshPlaceMenu(selectedPlaceId, {
         placeName: selectedDetails?.name ?? selectedPlace.name,
         websiteUrl: selectedDetails?.website_uri ?? null,
@@ -256,7 +269,27 @@ export default function Home() {
     } finally {
       setRefreshingPlaceId(null);
     }
-  };
+  }, [detailStates, hydratePlaces, selectedAllergens, selectedPlace, selectedPlaceId]);
+
+  useEffect(() => {
+    if (!selectedPlaceId || !selectedPlace || refreshingPlaceId === selectedPlaceId) {
+      return;
+    }
+    const detailState = detailStates[selectedPlaceId];
+    if (detailState?.status !== "ready") {
+      return;
+    }
+    const hasMenuItems = (detailState.data.menu?.sections ?? []).some((section) => section.items.length > 0);
+    if (hasMenuItems || !detailState.data.website_uri) {
+      return;
+    }
+    const attemptKey = `${selectedPlaceId}:${detailState.data.website_uri}`;
+    if (autoMenuRefreshAttempts.current.has(attemptKey)) {
+      return;
+    }
+    autoMenuRefreshAttempts.current.add(attemptKey);
+    void refreshSelectedMenu("auto");
+  }, [detailStates, refreshSelectedMenu, refreshingPlaceId, selectedPlace, selectedPlaceId]);
 
   const askAboutSelectedPlace = async () => {
     if (!selectedPlaceId || !selectedPlace) {

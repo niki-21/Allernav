@@ -27,6 +27,7 @@ ExtractDocument = Callable[[str], DocumentExtraction | None]
 MENU_NAVIGATION_WORDS = {
     "home",
     "hours",
+    "hour",
     "reservation",
     "reservations",
     "order",
@@ -37,6 +38,33 @@ MENU_NAVIGATION_WORDS = {
     "careers",
     "privacy",
     "terms",
+}
+
+SCHEDULE_WORDS = {
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "mon",
+    "tue",
+    "wed",
+    "thu",
+    "fri",
+    "sat",
+    "sun",
+    "am",
+    "pm",
+    "open",
+    "closed",
+    "hours",
+    "hour",
+    "calendar",
+    "event",
+    "events",
+    "market",
 }
 
 
@@ -120,7 +148,16 @@ def load_menu_record(restaurant_id: str, db_path: Path | None = None) -> tuple[s
 
     if not row or row[2] != "complete":
         return None
-    return row[0], MenuSource.model_validate_json(row[1])
+    source = MenuSource.model_validate_json(row[1])
+    sanitized_sections = sanitize_sections(source.sections)
+    if not sanitized_sections:
+        return None
+    return row[0], source.model_copy(
+        update={
+            "sections": sanitized_sections,
+            "raw_text": summarize_menu_text(sanitized_sections) or None,
+        }
+    )
 
 
 def load_menu_source(restaurant_id: str, db_path: Path | None = None) -> MenuSource | None:
@@ -432,6 +469,8 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
     if is_prompt_injection(name) or (description and is_prompt_injection(description)):
         return False
     normalized = name.lower()
+    description_normalized = (description or "").lower()
+    combined = f"{normalized} {description_normalized}"
     terms = re.split(r"[^a-z0-9]+", normalized)
     if len(name) < 3 or len(name) > 80:
         return False
@@ -439,9 +478,41 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if re.search(r"privacy|copyright|newsletter|instagram|facebook|careers|gift card", normalized):
         return False
+    if looks_like_schedule_or_event_text(name, description):
+        return False
+    if not looks_like_food_text(combined):
+        return False
     if len([term for term in terms if term]) <= 1 and not description:
         return False
     return True
+
+
+def looks_like_schedule_or_event_text(name: str, description: str | None = None) -> bool:
+    text = f"{name} {description or ''}".lower()
+    tokens = set(re.split(r"[^a-z0-9]+", text))
+    time_pattern = re.search(r"\b\d{1,2}\s*(?::\d{2})?\s*(am|pm)\b|\b\d{1,2}\s*-\s*\d{1,2}\b", text)
+    weekday_count = sum(1 for word in SCHEDULE_WORDS if word in tokens)
+    if time_pattern and weekday_count > 0:
+        return True
+    if weekday_count >= 2 and not looks_like_food_text(text):
+        return True
+    if re.search(r"\b(open|closed|hours?|calendar|events?)\b", text) and time_pattern:
+        return True
+    return False
+
+
+def looks_like_food_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"rice|bowl|noodle|noodles|pasta|sauce|sandwich|salad|roll|taco|burger|pizza|"
+            r"chicken|beef|pork|fish|salmon|tuna|shrimp|crab|tofu|egg|cheese|cream|"
+            r"sesame|peanut|soy|bread|flour|vegetable|tomato|greens|beans|soup|"
+            r"cake|dessert|cookie|fries|fried|grilled|roasted|steamed|spicy"
+            r")\b",
+            text,
+        )
+    )
 
 
 def flatten_json_ld(value: Any) -> list[Any]:

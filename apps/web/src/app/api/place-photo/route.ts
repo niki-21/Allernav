@@ -36,5 +36,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ detail: "Photo URI unavailable." }, { status: 502 });
   }
 
-  return NextResponse.redirect(payload.photoUri, 302);
+  const imageResponse = await fetch(payload.photoUri, { cache: "no-store" });
+  if (!imageResponse.ok || !imageResponse.body) {
+    return NextResponse.json({ detail: "Could not load place photo bytes." }, { status: 502 });
+  }
+
+  return new Response(imageResponse.body, {
+    status: 200,
+    headers: {
+      "Content-Type": imageResponse.headers.get("content-type") ?? "image/jpeg",
+      "Cache-Control": "public, max-age=86400, s-maxage=86400",
+    },
+  });
 }
