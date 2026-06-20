@@ -1,7 +1,7 @@
 import { ALLERGEN_OPTIONS } from "../lib/allergens.ts";
 import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, PlaceSummary, SearchResponse } from "../lib/types.ts";
 import { buildDecisionBrief } from "./briefing.ts";
-import { fetchBackendPlaceMenu } from "./fastapi.ts";
+import { fetchBackendPlaceMenu, refreshBackendPlaceMenu } from "./fastapi.ts";
 import { GooglePlacesClient, type GooglePlaceDetails } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
 import { recommendMenuItems } from "./recommendations.ts";
@@ -140,7 +140,7 @@ export async function getPlaceDetailsService(
   allergens: AllergyTag[],
   client: PlacesClientLike = new GooglePlacesClient(),
 ): Promise<PlaceDetailsResponse> {
-  const selectedAllergens = allergens.length > 0 ? allergens : ["peanut"];
+  const selectedAllergens: AllergyTag[] = allergens.length > 0 ? allergens : ["peanut"];
   const place = await client.getPlaceDetails(placeId);
   const localSnapshot = getLocalPlaceSnapshot(place.name);
   const mergedPlace = {
@@ -148,8 +148,16 @@ export async function getPlaceDetailsService(
     reviews: [...place.reviews, ...(localSnapshot?.reviews ?? [])],
   };
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
-  const backendMenu = await fetchBackendPlaceMenu(place.id);
-  const menu = backendMenu ?? localSnapshot?.menu ?? null;
+  const storedMenu = await fetchBackendPlaceMenu(place.id);
+  const ingestedMenu =
+    storedMenu ??
+    (place.website_uri
+      ? await refreshBackendPlaceMenu(place.id, {
+          restaurantName: place.name,
+          websiteUrl: place.website_uri,
+        })
+      : null);
+  const menu = ingestedMenu ?? localSnapshot?.menu ?? null;
   const recommendedItems = await recommendMenuItems(place.name, selectedAllergens, menu, evidence);
   const scoreSummary = applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length);
   const decisionBrief = buildDecisionBrief(scoreSummary, evidence, menu, recommendedItems);
@@ -164,7 +172,16 @@ export async function getPlaceDetailsService(
     primary_type: place.primary_type ?? null,
     website_uri: place.website_uri ?? null,
     editorial_summary: place.editorial_summary ?? null,
-    google_maps_uri: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${encodeURIComponent(place.id)}`,
+    national_phone_number: place.national_phone_number ?? null,
+    international_phone_number: place.international_phone_number ?? null,
+    price_level: place.price_level ?? null,
+    price_range: place.price_range ?? null,
+    regular_opening_hours: place.regular_opening_hours ?? null,
+    current_opening_hours: place.current_opening_hours ?? null,
+    service_options: place.service_options ?? {},
+    google_maps_uri:
+      place.google_maps_uri ??
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name)}&query_place_id=${encodeURIComponent(place.id)}`,
     google_review_uri: `https://search.google.com/local/writereview?placeid=${encodeURIComponent(place.id)}`,
     selected_allergens: selectedAllergens,
     score_summary: scoreSummary,

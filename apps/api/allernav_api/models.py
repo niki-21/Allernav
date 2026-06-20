@@ -133,11 +133,20 @@ class PlaceDetailsResponse(BaseModel):
     primary_type: str | None = None
     website_uri: str | None = None
     editorial_summary: str | None = None
+    national_phone_number: str | None = None
+    international_phone_number: str | None = None
+    price_level: str | None = None
+    price_range: str | None = None
+    regular_opening_hours: dict | None = None
+    current_opening_hours: dict | None = None
+    service_options: dict[str, bool | None] = Field(default_factory=dict)
     google_maps_uri: str
     google_review_uri: str
     selected_allergens: list[AllergyTag]
     score_summary: PlaceScoreSummary
     evidence: list[ReviewEvidence]
+    review_snippets: list["PlaceReviewSnippet"] = Field(default_factory=list)
+    photos: list["PlacePhoto"] = Field(default_factory=list)
     explanation: str
     menu: "PlaceMenu | None" = None
     recommended_items: list["RecommendedMenuItem"] = Field(default_factory=list)
@@ -280,14 +289,14 @@ class FeedbackResponse(BaseModel):
 
 class SearchIndexResponse(BaseModel):
     restaurant_id: str
-    indexed_documents: int
+    indexed_documents: int = 0
     status: str
 
 
 class HybridSearchRequest(BaseModel):
-    query: str
-    allergens: list[AllergyTag] = Field(default_factory=list)
+    query: str = ""
     restaurant_id: str | None = None
+    allergens: list[AllergyTag] = Field(default_factory=list)
     source_types: list[SourceType] = Field(default_factory=list)
     vector: list[float] | None = None
     top: int = Field(default=5, ge=1, le=20)
@@ -328,6 +337,23 @@ class CommunityReview(BaseModel):
     body: str
     created_at: str
     verification_status: str = "unverified"
+
+
+class PlaceReviewSnippet(BaseModel):
+    review_id: str
+    author_name: str | None = None
+    rating: float | None = None
+    text: str
+    publish_time: str | None = None
+    relative_publish_time: str | None = None
+
+
+class PlacePhoto(BaseModel):
+    name: str
+    url: str
+    width_px: int | None = None
+    height_px: int | None = None
+    author_names: list[str] = Field(default_factory=list)
 
 
 class MenuRefreshJob(BaseModel):

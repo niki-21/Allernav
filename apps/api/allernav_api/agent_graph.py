@@ -106,45 +106,46 @@ def restaurant_menu_retrieval(state: DiningAgentState) -> DiningAgentState:
     trace = state.get("trace") or AgentTraceSummary()
     trace.nodes.append("Restaurant / Menu Retrieval")
     context = state.get("context")
-    restaurant_id = state.get("restaurant_id")
-    restaurant_name = state.get("restaurant_name")
+    restaurant_id = state.get("restaurant_id") or (context.restaurant_id if context else None)
+    restaurant_name = state.get("restaurant_name") or (context.restaurant_name if context else None)
+
+    if context and context.menu_sources:
+        trace.tool_calls.append("provided_menu_context")
+        return {"context": context, "trace": trace}
+
+    stored_menu = load_menu_source(restaurant_id) if restaurant_id else None
+    if stored_menu:
+        trace.tool_calls.append("stored_menu_lookup")
+        context = context or RestaurantContext(restaurant_id=restaurant_id, restaurant_name=restaurant_name)
+        context = context.model_copy(update={"menu_sources": [stored_menu, *context.menu_sources]})
+        return {"context": context, "trace": trace}
+
+    website_url = context.website_url if context else None
+    if restaurant_id and website_url:
+        ingested = ingest_menu_from_website(
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant_name,
+            website_url=website_url,
+        )
+        trace.tool_calls.append("official_menu_ingestion")
+        if ingested.sections:
+            context = context or RestaurantContext(restaurant_id=restaurant_id, restaurant_name=restaurant_name)
+            context = context.model_copy(update={"menu_sources": [ingested, *context.menu_sources]})
+            return {"context": context, "trace": trace}
+
+    if context is None:
+        context = get_fixture_context(restaurant_id, restaurant_name)
+        if context is not None:
+            trace.tool_calls.append("fixture_menu_lookup")
 
     if context is None:
         context = RestaurantContext(
             restaurant_id=restaurant_id,
             restaurant_name=restaurant_name,
         )
-    if restaurant_id and not context.restaurant_id:
-        context.restaurant_id = restaurant_id
-    if restaurant_name and not context.restaurant_name:
-        context.restaurant_name = restaurant_name
 
-    if context.menu_sources:
-        trace.tool_calls.append("provided_menu_context")
-        return {"context": context, "trace": trace}
-
-    if context.restaurant_id:
-        stored = load_menu_source(context.restaurant_id)
-        if stored:
-            trace.tool_calls.append("stored_menu_lookup")
-            return {"context": context.model_copy(update={"menu_sources": [stored]}), "trace": trace}
-
-    if context.restaurant_id and context.website_url:
-        ingested = ingest_menu_from_website(
-            restaurant_id=context.restaurant_id,
-            restaurant_name=context.restaurant_name,
-            website_url=context.website_url,
-        )
-        if ingested.sections:
-            trace.tool_calls.append("official_menu_ingestion")
-            return {"context": context.model_copy(update={"menu_sources": [ingested]}), "trace": trace}
-
-    fixture = get_fixture_context(context.restaurant_id, context.restaurant_name)
-    if fixture is not None:
-        trace.tool_calls.append("fixture_menu_lookup")
-        return {"context": fixture, "trace": trace}
-
-    trace.tool_calls.append("menu_evidence_not_found")
+    if not context.menu_sources:
+        trace.tool_calls.append("menu_evidence_not_found")
     return {"context": context, "trace": trace}
 
 

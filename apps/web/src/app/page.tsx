@@ -11,10 +11,10 @@ import {
   ALLERGY_PROFILE_STORAGE_KEY,
   DEFAULT_ALLERGENS,
 } from "@/lib/allergens";
-import { askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
+import { askRestaurant, fetchPlaceDetails, searchPlaces } from "@/lib/api";
 import { rankPlaces, shouldShowSearchAreaButton } from "@/lib/placeRanking";
 import { applyPlaceDetailError, applyPlaceDetailSuccess, seedPlaceDetailsState } from "@/lib/placeState";
-import type { AllergyTag, AskRestaurantResponse, LatLng, MenuRefreshJob, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type { AllergyTag, AskRestaurantResponse, LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
 const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
 const DEFAULT_QUERY = "";
@@ -32,13 +32,10 @@ export default function Home() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [locationStatus, setLocationStatus] = useState<"idle" | "locating" | "denied">("idle");
-  const [menuRefreshJobs, setMenuRefreshJobs] = useState<Record<string, MenuRefreshJob>>({});
-  const [refreshingPlaceId, setRefreshingPlaceId] = useState<string | null>(null);
   const [askResponses, setAskResponses] = useState<Record<string, AskRestaurantResponse>>({});
   const [askingPlaceId, setAskingPlaceId] = useState<string | null>(null);
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
-  const autoMenuRefreshAttempts = useRef<Set<string>>(new Set());
   const requestSequence = useRef(0);
   const [profileReady, setProfileReady] = useState(false);
 
@@ -227,70 +224,6 @@ export default function Home() {
     );
   };
 
-  const refreshSelectedMenu = useCallback(async (mode: "auto" | "manual" = "manual") => {
-    if (!selectedPlaceId || !selectedPlace) {
-      return;
-    }
-    setRefreshingPlaceId(selectedPlaceId);
-    try {
-      const detailState = detailStates[selectedPlaceId];
-      const selectedDetails = detailState?.status === "ready" ? detailState.data : null;
-      if (mode === "auto") {
-        setMenuRefreshJobs((current) => ({
-          ...current,
-          [selectedPlaceId]: {
-            id: `auto-${selectedPlaceId}`,
-            place_id: selectedPlaceId,
-            status: "running",
-            message: "Checking official menu sources for this place.",
-            created_at: new Date().toISOString(),
-          },
-        }));
-      }
-      const job = await refreshPlaceMenu(selectedPlaceId, {
-        placeName: selectedDetails?.name ?? selectedPlace.name,
-        websiteUrl: selectedDetails?.website_uri ?? null,
-      });
-      setMenuRefreshJobs((current) => ({ ...current, [selectedPlaceId]: job }));
-      const sequence = ++requestSequence.current;
-      setDetailStates((current) => ({ ...current, [selectedPlaceId]: { status: "loading" } }));
-      void hydratePlaces([selectedPlace], selectedAllergens, sequence);
-    } catch (error) {
-      setMenuRefreshJobs((current) => ({
-        ...current,
-        [selectedPlaceId]: {
-          id: `failed-${selectedPlaceId}`,
-          place_id: selectedPlaceId,
-          status: "failed",
-          message: error instanceof Error ? error.message : "Menu refresh failed.",
-          created_at: new Date().toISOString(),
-        },
-      }));
-    } finally {
-      setRefreshingPlaceId(null);
-    }
-  }, [detailStates, hydratePlaces, selectedAllergens, selectedPlace, selectedPlaceId]);
-
-  useEffect(() => {
-    if (!selectedPlaceId || !selectedPlace || refreshingPlaceId === selectedPlaceId) {
-      return;
-    }
-    const detailState = detailStates[selectedPlaceId];
-    if (detailState?.status !== "ready") {
-      return;
-    }
-    const hasMenuItems = (detailState.data.menu?.sections ?? []).some((section) => section.items.length > 0);
-    if (hasMenuItems || !detailState.data.website_uri) {
-      return;
-    }
-    const attemptKey = `${selectedPlaceId}:${detailState.data.website_uri}`;
-    if (autoMenuRefreshAttempts.current.has(attemptKey)) {
-      return;
-    }
-    autoMenuRefreshAttempts.current.add(attemptKey);
-    void refreshSelectedMenu("auto");
-  }, [detailStates, refreshSelectedMenu, refreshingPlaceId, selectedPlace, selectedPlaceId]);
-
   const askAboutSelectedPlace = async () => {
     if (!selectedPlaceId || !selectedPlace) {
       return;
@@ -385,11 +318,8 @@ export default function Home() {
           <TrustPanel
             place={selectedPlace}
             detailState={selectedPlaceId ? detailStates[selectedPlaceId] : undefined}
-            menuRefreshJob={selectedPlaceId ? menuRefreshJobs[selectedPlaceId] : null}
             askResponse={selectedPlaceId ? askResponses[selectedPlaceId] : null}
-            isRefreshingMenu={refreshingPlaceId === selectedPlaceId}
             isAskingRestaurant={askingPlaceId === selectedPlaceId}
-            onRefreshMenu={refreshSelectedMenu}
             onAskRestaurant={askAboutSelectedPlace}
             onRetry={() => {
               if (!selectedPlaceId) {

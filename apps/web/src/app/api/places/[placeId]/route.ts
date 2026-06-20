@@ -13,9 +13,10 @@ export async function GET(request: Request, context: { params: Promise<{ placeId
   if (rawAllergens.some((value) => !isAllergyTag(value))) {
     return NextResponse.json({ detail: "Unsupported allergen value." }, { status: 400 });
   }
+  const allergens = rawAllergens.filter(isAllergyTag);
 
   try {
-    const response = await getPlaceDetailsService(placeId, rawAllergens);
+    const response = await getPlaceDetailsService(placeId, allergens);
     return NextResponse.json(response);
   } catch (error) {
     if (error instanceof GooglePlacesError) {
