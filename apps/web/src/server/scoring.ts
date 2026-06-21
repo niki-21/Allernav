@@ -196,8 +196,23 @@ function findPhrase(text: string, phrases: string[]): string | null {
   return phrases.find((phrase) => text.includes(phrase)) ?? null;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function termMatches(text: string, term: string): boolean {
+  const normalizedTerm = term.toLowerCase().trim();
+  if (!normalizedTerm) {
+    return false;
+  }
+  const pattern = normalizedTerm.includes(" ")
+    ? escapeRegex(normalizedTerm).replace(/\s+/g, "\\s+")
+    : escapeRegex(normalizedTerm);
+  return new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, "i").test(text);
+}
+
 function findAllergens(text: string, selectedAllergens: AllergyTag[]): AllergyTag[] {
-  return selectedAllergens.filter((allergen) => ALLERGY_SYNONYMS[allergen].some((term) => text.includes(term)));
+  return selectedAllergens.filter((allergen) => ALLERGY_SYNONYMS[allergen].some((term) => termMatches(text, term)));
 }
 
 function buildExcerpt(text: string, phrase: string, maxChars = 170): string {
@@ -275,7 +290,7 @@ function detectSignals(
 ): DetectedSignal[] {
   const normalized = normalizeText(reviewText);
   const matchedAllergens = findAllergens(normalized, selectedAllergens);
-  const genericAllergyContext = GENERIC_ALLERGY_TERMS.some((term) => normalized.includes(term));
+  const genericAllergyContext = GENERIC_ALLERGY_TERMS.some((term) => termMatches(normalized, term));
   const signals: DetectedSignal[] = [];
 
   for (const config of NEGATIVE_SIGNALS) {
@@ -440,7 +455,9 @@ export function analyzePlace(
         matched_phrase: signal.matchedPhrase,
         signal_label: signal.label,
         tone: signal.impact === "positive" ? "reassuring" : "risk_note",
-        is_allergy_relevant: signal.matchedAllergens.length > 0 || GENERIC_ALLERGY_TERMS.some((term) => normalizeText(reviewText).includes(term)),
+        is_allergy_relevant:
+          signal.matchedAllergens.length > 0 ||
+          GENERIC_ALLERGY_TERMS.some((term) => termMatches(normalizeText(reviewText), term)),
         weight: Math.round(signal.weight * 100) / 100,
         publish_time: review.publish_time ?? null,
       };

@@ -82,6 +82,16 @@ export interface PlaceReviewSnippet {
   relative_publish_time?: string | null;
 }
 
+export interface ReviewSourceSummary {
+  google_review_count: number;
+  expanded_review_count: number;
+  local_snapshot_review_count: number;
+  analyzed_review_count: number;
+  displayed_review_count: number;
+  expanded_reviews_configured: boolean;
+  expanded_review_provider?: "apify" | null;
+}
+
 export interface PlacePhoto {
   name: string;
   url: string;
@@ -218,6 +228,7 @@ export interface PlaceDetailsResponse extends PlaceSummary {
   score_summary: PlaceScoreSummary;
   evidence: ReviewEvidence[];
   review_snippets: PlaceReviewSnippet[];
+  review_source_summary?: ReviewSourceSummary;
   photos: PlacePhoto[];
   explanation: string;
   decision_brief: PlaceDecisionBrief;

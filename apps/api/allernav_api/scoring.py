@@ -275,7 +275,7 @@ def detect_signals(
 ) -> list[DetectedSignal]:
     normalized = normalize_text(review_text)
     matched_allergens = find_allergens(normalized, selected_allergens)
-    generic_allergy_context = any(term in normalized for term in GENERIC_ALLERGY_TERMS)
+    generic_allergy_context = any(term_matches(normalized, term) for term in GENERIC_ALLERGY_TERMS)
     signals: list[DetectedSignal] = []
 
     for config in NEGATIVE_SIGNALS:
@@ -369,9 +369,17 @@ def normalize_text(text: str) -> str:
 def find_allergens(text: str, selected_allergens: list[AllergyTag]) -> list[AllergyTag]:
     matches: list[AllergyTag] = []
     for allergen in selected_allergens:
-        if any(term in text for term in ALLERGY_SYNONYMS[allergen]):
+        if any(term_matches(text, term) for term in ALLERGY_SYNONYMS[allergen]):
             matches.append(allergen)
     return matches
+
+
+def term_matches(text: str, term: str) -> bool:
+    normalized_term = term.lower().strip()
+    if not normalized_term:
+        return False
+    pattern = r"\s+".join(re.escape(part) for part in normalized_term.split())
+    return bool(re.search(rf"(^|[^a-z0-9]){pattern}([^a-z0-9]|$)", text, flags=re.IGNORECASE))
 
 
 def find_phrase(text: str, phrases: tuple[str, ...]) -> str | None:

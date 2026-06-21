@@ -110,7 +110,24 @@ class ScoringTests(unittest.TestCase):
         self.assertLessEqual(summary.score, 30)
         self.assertEqual(summary.verdict, Verdict.HIGH_RISK)
 
+    def test_allergen_terms_require_word_boundaries(self) -> None:
+        place = {
+            "rating": 1.5,
+            "reviews": [
+                {
+                    "review_id": "1",
+                    "rating": 1,
+                    "text": "The music is very loud and the service was offish, but this review says nothing about food allergies.",
+                    "publish_time": "2026-03-15T12:00:00Z",
+                }
+            ],
+        }
+
+        summary, evidence, _ = analyze_place(place, [AllergyTag.FISH])
+
+        self.assertEqual(summary.evidence_count, 0)
+        self.assertFalse(evidence)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -69,7 +69,6 @@ export default function TrustPanel({
     placeId: null,
     tab: "overview",
   });
-  const [failedPhotoNames, setFailedPhotoNames] = useState<Set<string>>(() => new Set());
 
   if (!place) {
     return (
@@ -113,16 +112,23 @@ export default function TrustPanel({
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
   const reviewSnippets = data.review_snippets ?? [];
-  const photos = (data.photos ?? []).filter((photo) => !failedPhotoNames.has(photo.name));
+  const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
   const signalSource =
-    reviewSignalCount > 0 && data.menu
-      ? `${reviewSignalCount} review signal${reviewSignalCount === 1 ? "" : "s"} + local menu snapshot`
+    reviewSignalCount > 0 && menuItemCount > 0
+      ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"} + ${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"}`
       : reviewSignalCount > 0
-        ? `${reviewSignalCount} review signal${reviewSignalCount === 1 ? "" : "s"}`
-        : data.menu
-          ? "Local menu snapshot only"
+        ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"}`
+        : menuItemCount > 0
+          ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"}`
           : "Very limited signal";
+  const reviewSourceLine = reviewSource
+    ? reviewSource.expanded_reviews_configured
+      ? reviewSource.expanded_review_count > 0
+        ? `Apify expanded reviews analyzed: ${reviewSource.expanded_review_count}. Showing ${reviewSource.displayed_review_count} most relevant of ${reviewSource.analyzed_review_count} total review snippets.`
+        : `Apify is configured, but no expanded reviews were returned for this place. Showing ${reviewSource.google_review_count} Google snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
+      : `Apify is not configured for this running server. Showing Google’s limited review sample of ${reviewSource.google_review_count} snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
+    : "Showing the review snippets returned by the current place details source.";
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
   const agentRecommendation = data.agent_recommendation ?? null;
   const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
@@ -137,26 +143,6 @@ export default function TrustPanel({
 
   return (
     <div className="trust-panel-content">
-      {photos.length > 0 && (
-        <div className="place-photo-strip" aria-label="Place photos">
-          {photos.slice(0, 4).map((photo, index) => (
-            <img
-              key={photo.name}
-              src={photo.url}
-              alt={`${data.name} photo ${index + 1}`}
-              loading="lazy"
-              onError={() =>
-                setFailedPhotoNames((current) => {
-                  const next = new Set(current);
-                  next.add(photo.name);
-                  return next;
-                })
-              }
-            />
-          ))}
-        </div>
-      )}
-
       <div className="place-sheet-header">
         <p className="panel-eyebrow">Place details</p>
         <h2>{data.name}</h2>
@@ -232,20 +218,6 @@ export default function TrustPanel({
               <p>{agentRecommendation.recommended_questions.slice(0, 2).join(" ")}</p>
             </div>
           )}
-          {photos.length > 0 && (
-            <div className="overview-line">
-              <strong>Photos</strong>
-              <p>{photos.length} Google place photo{photos.length === 1 ? "" : "s"} available for quick context.</p>
-            </div>
-          )}
-          <div className="overview-line">
-            <strong>Menu</strong>
-            <p>
-              {menuItemCount > 0
-                ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} captured from ${data.menu?.source_url ?? "available sources"}.`
-                : "No reliable dish-level menu evidence is captured yet. AllerNav checks official website, linked PDF, and image menu sources when available."}
-            </p>
-          </div>
         </div>
       )}
 
@@ -266,25 +238,51 @@ export default function TrustPanel({
               </a>
             )}
           </div>
+          {data.recommended_items.length > 0 && (
+            <div className="verify-list">
+              <strong>Items to verify</strong>
+              {data.recommended_items.slice(0, 5).map((item) => (
+                <article
+                  key={`${item.section_title ?? "pick"}-${item.name}`}
+                  className="verify-item-row"
+                  title={`${item.reason}${item.caution ? ` ${item.caution}` : ""}`}
+                >
+                  <div>
+                    <strong>{item.name}</strong>
+                    <p>{item.reason}</p>
+                    {item.caution && <p className="muted-line">{item.caution}</p>}
+                  </div>
+                  <span>Verify</span>
+                </article>
+              ))}
+            </div>
+          )}
+
           {menuSections.length > 0 ? (
             <div className="menu-section-list google-menu-list">
               {menuSections.slice(0, 3).map((section) => (
                 <section key={section.title} className="menu-list-section">
                   <h3>{section.title}</h3>
                   {section.items.slice(0, 6).map((item) => (
-                    <article key={`${section.title}-${item.name}`} className="menu-list-item">
-                      <strong>{item.name}</strong>
-                      {item.price && <span>{item.price}</span>}
-                      {item.description && <p>{item.description}</p>}
-                      {item.likely_risky_for.some((allergen) => data.selected_allergens.includes(allergen)) && (
-                        <p className="menu-risk-note">
-                          Flags:{" "}
-                          {item.likely_risky_for
-                            .filter((allergen) => data.selected_allergens.includes(allergen))
-                            .map((allergen) => allergen.replace("_", " "))
-                            .join(", ")}
-                        </p>
-                      )}
+                    <article
+                      key={`${section.title}-${item.name}`}
+                      className="menu-list-item compact-menu-row"
+                      title={item.description ?? "Menu item extracted from source. Verify ingredients with staff."}
+                    >
+                      <div>
+                        <strong>{item.name}</strong>
+                        {item.description && <p>{item.description}</p>}
+                        {item.likely_risky_for.some((allergen) => data.selected_allergens.includes(allergen)) && (
+                          <p className="menu-risk-note">
+                            Watch:{" "}
+                            {item.likely_risky_for
+                              .filter((allergen) => data.selected_allergens.includes(allergen))
+                              .map((allergen) => allergen.replace("_", " "))
+                              .join(", ")}
+                          </p>
+                        )}
+                      </div>
+                      <span>{item.price ?? "Verify"}</span>
                     </article>
                   ))}
                 </section>
@@ -303,19 +301,6 @@ export default function TrustPanel({
                 </a>
               )}
             </article>
-          )}
-
-          {data.recommended_items.length > 0 && (
-            <div className="menu-section-list compact-recommendations">
-              <strong>Items to verify</strong>
-              {data.recommended_items.slice(0, 2).map((item) => (
-                <article key={`${item.section_title ?? "pick"}-${item.name}`} className="menu-list-item">
-                  <strong>{item.name}</strong>
-                  <p>{item.reason}</p>
-                  <p>{item.caution || "Verify ingredients and prep before ordering."}</p>
-                </article>
-              ))}
-            </div>
           )}
 
           {agentRecommendation && agentRecommendation.dish_results.length > 0 && (
@@ -345,12 +330,12 @@ export default function TrustPanel({
       {activeTab === "reviews" && (
         <div className="place-tab-panel">
           <p className="panel-note">{signalSource}</p>
+          <p className="panel-note">{reviewSourceLine}</p>
 
           <div className="review-group">
-            <strong>Allergy evidence</strong>
+            <strong>Allergy review signals</strong>
             <p className="panel-note">
-              Google returns a limited set of review snippets. AllerNav scans those snippets for allergy terms and keeps
-              reviews as warning context, not proof that a dish is lower risk.
+              Reviews are warning context only. AllerNav does not use them to prove that a dish is lower risk.
             </p>
             <div className="evidence-list compact">
               {data.evidence.length === 0 && (
@@ -401,31 +386,25 @@ export default function TrustPanel({
             </div>
           )}
 
-          <div className="review-group">
-            <strong>Google review snippets</strong>
-            <p className="panel-note">
-              Allergy-related snippets are shown first when present. Google Places only returns a small relevance-ranked
-              sample, so missing allergy mentions does not mean none exist.
-            </p>
-            <div className="evidence-list compact">
-              {reviewSnippets.length === 0 && (
-                <article className="evidence-item empty">
-                  <p className="evidence-excerpt">Google review text was not returned for this place.</p>
-                </article>
-              )}
-
-              {reviewSnippets.slice(0, 4).map((review) => (
-                <article key={review.review_id} className="evidence-item">
-                  <div className="evidence-item-header">
-                    <span>{review.author_name ?? "Google review"}</span>
-                    <span>{review.rating ? `${review.rating.toFixed(1)}★` : review.relative_publish_time ?? "Review"}</span>
-                  </div>
-                  <p className="evidence-excerpt">{review.text}</p>
-                  {review.relative_publish_time && <p className="review-source-line">{review.relative_publish_time}</p>}
-                </article>
-              ))}
+          {data.evidence.length === 0 && reviewSnippets.length > 0 && (
+            <div className="review-group">
+              <strong>Returned review sample</strong>
+              <p className="panel-note">
+                These snippets were returned, but no allergy-specific terms matched your selected allergens.
+              </p>
+              <div className="evidence-list compact">
+                {reviewSnippets.slice(0, 3).map((review) => (
+                  <article key={review.review_id} className="evidence-item neutral">
+                    <div className="evidence-item-header">
+                      <span>{review.author_name ?? "Review"}</span>
+                      <span>{review.rating ? `${review.rating.toFixed(1)}★` : review.relative_publish_time ?? "Review"}</span>
+                    </div>
+                    <p className="evidence-excerpt">{review.text}</p>
+                  </article>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

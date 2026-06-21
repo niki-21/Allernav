@@ -146,6 +146,7 @@ class PlaceDetailsResponse(BaseModel):
     score_summary: PlaceScoreSummary
     evidence: list[ReviewEvidence]
     review_snippets: list["PlaceReviewSnippet"] = Field(default_factory=list)
+    review_source_summary: "ReviewSourceSummary | None" = None
     photos: list["PlacePhoto"] = Field(default_factory=list)
     explanation: str
     menu: "PlaceMenu | None" = None
@@ -346,6 +347,16 @@ class PlaceReviewSnippet(BaseModel):
     text: str
     publish_time: str | None = None
     relative_publish_time: str | None = None
+
+
+class ReviewSourceSummary(BaseModel):
+    google_review_count: int = 0
+    expanded_review_count: int = 0
+    local_snapshot_review_count: int = 0
+    analyzed_review_count: int = 0
+    displayed_review_count: int = 0
+    expanded_reviews_configured: bool = False
+    expanded_review_provider: str | None = None
 
 
 class PlacePhoto(BaseModel):
