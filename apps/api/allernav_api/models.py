@@ -365,6 +365,16 @@ class MenuRefreshJob(BaseModel):
     completed_at: str | None = None
 
 
+class ReviewRefreshJob(BaseModel):
+    id: str
+    place_id: str
+    status: str = "queued"
+    message: str
+    reviews_count: int = 0
+    created_at: str
+    completed_at: str | None = None
+
+
 class AskRestaurantRequest(BaseModel):
     place_id: str
     place_name: str | None = None

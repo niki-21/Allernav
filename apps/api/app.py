@@ -23,8 +23,10 @@ from allernav_api.models import (
     MenuRefreshJob,
     PlaceDetailsResponse,
     PlaceMenu,
+    PlaceReviewSnippet,
     RecommendationResult,
     RecommendDishesRequest,
+    ReviewRefreshJob,
     SearchIndexResponse,
     SearchRequest,
     SearchResponse,
@@ -40,9 +42,11 @@ from allernav_api.agent_service import (
 )
 from allernav_api.service import (
     create_menu_refresh_job,
+    create_review_refresh_job,
     create_restaurant_question,
     get_place_details_service,
     get_place_menu_service,
+    get_place_reviews_service,
     get_user_profile,
     hybrid_search_service,
     index_restaurant_menu_service,
@@ -91,6 +95,7 @@ def health() -> dict[str, object]:
     google_client = bool(os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"))
     gemini = bool(os.getenv("GEMINI_API_KEY"))
     supabase = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+    apify = bool(os.getenv("APIFY_TOKEN"))
     return {
         "ok": google_server,
         "service": "AllerNav API",
@@ -99,6 +104,7 @@ def health() -> dict[str, object]:
             "google_maps_client": google_client,
             "gemini": gemini,
             "supabase": supabase,
+            "apify_reviews": apify,
         },
     }
 
@@ -178,6 +184,16 @@ async def place_details_endpoint(
 @app.get("/api/places/{place_id}/menu", response_model=PlaceMenu)
 async def place_menu_endpoint(place_id: str) -> PlaceMenu:
     return await get_place_menu_service(place_id)
+
+
+@app.get("/api/places/{place_id}/reviews", response_model=list[PlaceReviewSnippet])
+async def place_reviews_endpoint(place_id: str) -> list[PlaceReviewSnippet]:
+    return await get_place_reviews_service(place_id)
+
+
+@app.post("/api/places/{place_id}/reviews-refresh", response_model=ReviewRefreshJob)
+async def reviews_refresh_endpoint(place_id: str) -> ReviewRefreshJob:
+    return await create_review_refresh_job(place_id)
 
 
 @app.post("/api/places/{place_id}/menu-refresh", response_model=MenuRefreshJob)
