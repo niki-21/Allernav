@@ -403,6 +403,10 @@ export default function TrustPanel({
 
           <div className="review-group">
             <strong>Google review snippets</strong>
+            <p className="panel-note">
+              Allergy-related snippets are shown first when present. Google Places only returns a small relevance-ranked
+              sample, so missing allergy mentions does not mean none exist.
+            </p>
             <div className="evidence-list compact">
               {reviewSnippets.length === 0 && (
                 <article className="evidence-item empty">

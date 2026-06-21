@@ -71,6 +71,26 @@ SMORGASBURG_SCHEDULE_HTML = """
 """
 
 
+NOISY_WEBSITE_MENU_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>Paulaner Sunset Spezi</h3>
+      <p>German soft drink with cola and orange mix.</p>
+    </article>
+    <article class="menu-item">
+      <h3>Book your private event</h3>
+      <p>Reserve our dining room for birthdays and corporate dinners.</p>
+    </article>
+    <article class="menu-item">
+      <h3>Sesame Chicken Bowl</h3>
+      <p>Grilled chicken, rice, cucumber, sesame dressing, and scallions.</p>
+    </article>
+  </section>
+</html>
+"""
+
+
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -104,6 +124,15 @@ class MenuIngestionTests(unittest.TestCase):
 
         self.assertEqual(source.sections, [])
         self.assertIsNone(source.raw_text)
+
+    def test_rejects_beverage_and_marketing_items_before_storage(self) -> None:
+        source = parse_menu_html(NOISY_WEBSITE_MENU_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+        raw_text = source.raw_text or ""
+
+        self.assertEqual(item_names, ["Sesame Chicken Bowl"])
+        self.assertNotIn("Paulaner Sunset Spezi", raw_text)
+        self.assertNotIn("private event", raw_text)
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(
