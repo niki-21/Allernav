@@ -64,11 +64,17 @@ Vercel environment variables:
 - `GOOGLE_PLACES_API_KEY`
 - `GEMINI_API_KEY` (optional; enables Gemini-written menu recommendations)
 - `GEMINI_MODEL` (defaults to `gemini-3.5-flash`)
+- `APIFY_TOKEN` (optional; enables expanded Google review retrieval)
+- `APIFY_REVIEWS_ACTOR` (defaults to `kaix~google-maps-reviews-scraper`)
+- `APIFY_REVIEWS_LIMIT` (defaults to `100`)
+- `APIFY_REVIEWS_SORT` (defaults to `newest`)
+- `APIFY_LANGUAGE` (defaults to `en`)
+- `APIFY_REGION` (defaults to `US`)
 - `NEXT_PUBLIC_API_BASE_URL` (set to the FastAPI service URL when deployed)
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
-Google is required for search and maps. Gemini is optional; the app falls back to cautious heuristic recommendations when it is missing.
+Google is required for search and maps. Gemini is optional; the app falls back to cautious heuristic recommendations when it is missing. Apify is optional; when it is missing, AllerNav uses the limited review snippets returned by Google Places.
 
 After deploy, check:
 
@@ -137,6 +143,8 @@ POST /feedback
 GET  /restaurants/{id}/evidence
 GET  /api/places/{id}/menu
 POST /api/places/{id}/menu-refresh
+GET  /api/places/{id}/reviews
+POST /api/places/{id}/reviews-refresh
 POST /api/restaurants/{id}/search-index
 POST /api/search/hybrid
 ```
@@ -187,6 +195,26 @@ AZURE_SEARCH_INDEX_NAME=allernav-menu-evidence
 ```
 
 The deterministic allergen engine remains the safety authority. Hybrid/vector retrieval can surface evidence, but it does not decide that a dish is lower risk.
+
+Expanded Google review retrieval is optional through Apify. Set these in `apps/api/.env` for FastAPI and in the Vercel web project environment if the Next.js API route is serving place details directly:
+
+```bash
+APIFY_TOKEN=
+APIFY_API_BASE_URL=https://api.apify.com/v2
+APIFY_REVIEWS_ACTOR=kaix~google-maps-reviews-scraper
+APIFY_REVIEWS_LIMIT=100
+APIFY_REVIEWS_SORT=newest
+APIFY_LANGUAGE=en
+APIFY_REGION=US
+APIFY_REVIEWS_SEARCH_QUERY=
+APIFY_REVIEWS_NEWER_THAN=
+APIFY_REVIEWS_OLDER_THAN=
+APIFY_TIMEOUT_SECONDS=60
+APIFY_REVIEWS_CACHE_TTL_HOURS=168
+ALLERNAV_REVIEWS_DB=./.data/apify_reviews.sqlite
+```
+
+Apify reviews are treated as supplemental warning evidence. They can increase caution when allergy, cross-contact, staff knowledge, or reaction language appears, but they do not prove a dish is lower risk. Leave `APIFY_REVIEWS_SEARCH_QUERY` blank for the app default; AllerNav fetches a bounded review set and then locally ranks allergy-relevant language so it does not miss synonyms like celiac, cross-contact, dedicated fryer, peanut, sesame, or dairy.
 
 Backend checks:
 

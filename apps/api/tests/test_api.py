@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from allernav_api.models import AllergyTag, LatLng, SearchRequest
+from allernav_api.models import AllergyTag, LatLng, PlaceReviewSnippet, SearchRequest
 from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuItem, MenuSection, MenuSource, SourceType
 from allernav_api.agent_service import analyze_menu_service
 from allernav_api.menu_ingestion import save_menu_source
@@ -75,13 +75,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(dumped["allergens"], ["peanut"])
 
     def test_place_details_response_shape(self) -> None:
-        response = asyncio.run(
-            get_place_details_service(
-                "alpha",
-                allergens=[AllergyTag.PEANUT],
-                client=FakePlacesClient(),
+        with patch("allernav_api.service.load_or_fetch_reviews", return_value=[]):
+            response = asyncio.run(
+                get_place_details_service(
+                    "alpha",
+                    allergens=[AllergyTag.PEANUT],
+                    client=FakePlacesClient(),
+                )
             )
-        )
 
         dumped = response.model_dump()
         self.assertEqual(dumped["id"], "alpha")
@@ -90,6 +91,31 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(dumped["evidence"]), 1)
         self.assertIn("explanation", dumped)
 
+    def test_place_details_uses_apify_reviews_when_available(self) -> None:
+        with patch(
+            "allernav_api.service.load_or_fetch_reviews",
+            return_value=[
+                PlaceReviewSnippet(
+                    review_id="apify-1",
+                    author_name="Reviewer",
+                    rating=1,
+                    text="I have a sesame allergy and had a reaction after cross-contact.",
+                    publish_time="2026-02-22T12:00:00+00:00",
+                )
+            ],
+        ):
+            response = asyncio.run(
+                get_place_details_service(
+                    "alpha",
+                    allergens=[AllergyTag.SESAME],
+                    client=FakePlacesClient(),
+                )
+            )
+
+        self.assertEqual(response.review_snippets[0].review_id, "apify-1")
+        self.assertEqual(response.score_summary.verdict.value, "high_risk")
+        self.assertTrue(any(item.review_id == "apify-1" for item in response.evidence))
+
     def test_missing_reviews_is_handled(self) -> None:
         class NoReviewClient(FakePlacesClient):
             def get_place_details(self, place_id: str):  # noqa: ANN001
@@ -97,13 +123,14 @@ class ApiTests(unittest.TestCase):
                 place["reviews"] = []
                 return place
 
-        response = asyncio.run(
-            get_place_details_service(
-                "alpha",
-                allergens=[AllergyTag.PEANUT],
-                client=NoReviewClient(),
+        with patch("allernav_api.service.load_or_fetch_reviews", return_value=[]):
+            response = asyncio.run(
+                get_place_details_service(
+                    "alpha",
+                    allergens=[AllergyTag.PEANUT],
+                    client=NoReviewClient(),
+                )
             )
-        )
 
         self.assertEqual(response.score_summary.evidence_count, 0)
         self.assertEqual(response.score_summary.verdict.value, "use_caution")

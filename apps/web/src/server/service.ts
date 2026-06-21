@@ -4,6 +4,7 @@ import { buildDecisionBrief } from "./briefing.ts";
 import { fetchBackendPlaceMenu, refreshBackendPlaceMenu } from "./fastapi.ts";
 import { GooglePlacesClient, type GooglePlaceDetails, type GooglePlaceReview } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
+import { fetchApifyReviews } from "./apifyReviews.ts";
 import { recommendMenuItems } from "./recommendations.ts";
 import { analyzePlace } from "./scoring.ts";
 
@@ -124,6 +125,29 @@ function prioritizeReviewSnippets(
     .map(({ review }) => review);
 }
 
+function mergeReviewSources(
+  googleReviews: GooglePlaceReview[],
+  externalReviews: GooglePlaceReview[],
+): GooglePlaceReview[] {
+  const merged: GooglePlaceReview[] = [];
+  const seen = new Set<string>();
+
+  for (const review of [...externalReviews, ...googleReviews]) {
+    const text = review.text.trim();
+    if (!text) {
+      continue;
+    }
+    const key = review.review_id || text;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(review);
+  }
+
+  return merged;
+}
+
 function buildMenuEvidenceSummary(
   riskyCount: number,
   recommendedCount: number,
@@ -218,10 +242,14 @@ export async function getPlaceDetailsService(
 ): Promise<PlaceDetailsResponse> {
   const selectedAllergens: AllergyTag[] = allergens.length > 0 ? allergens : ["peanut"];
   const place = await client.getPlaceDetails(placeId);
+  const apifyReviews = await fetchApifyReviews(place.id);
   const localSnapshot = getLocalPlaceSnapshot(place.name);
   const mergedPlace = {
     ...place,
-    reviews: [...place.reviews, ...(localSnapshot?.reviews ?? [])],
+    reviews: mergeReviewSources(
+      [...place.reviews, ...(localSnapshot?.reviews ?? [])],
+      apifyReviews,
+    ),
   };
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
   const evidenceReviewIds = new Set(evidence.map((item) => item.review_id));

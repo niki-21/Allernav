@@ -18,17 +18,21 @@ from .models import (
     MenuRefreshJob,
     PlaceDetailsResponse,
     PlaceMenu,
+    PlaceReviewSnippet,
     RestaurantContext,
+    ReviewRefreshJob,
     SearchRequest,
     SearchResponse,
     SearchIndexResponse,
     UserProfileResponse,
 )
+from .apify_reviews import fetch_apify_reviews, load_cached_reviews, load_or_fetch_reviews
 from .scoring import analyze_place
 
 
 DEFAULT_CENTER = LatLng(lat=40.741895, lng=-73.989308)
 MENU_REFRESH_JOBS: dict[str, MenuRefreshJob] = {}
+REVIEW_REFRESH_JOBS: dict[str, ReviewRefreshJob] = {}
 ASK_REQUESTS: dict[str, AskRestaurantResponse] = {}
 PROFILE = UserProfileResponse()
 
@@ -54,6 +58,12 @@ async def get_place_details_service(
 ) -> PlaceDetailsResponse:
     selected_allergens = allergens or [AllergyTag.PEANUT]
     place = client.get_place_details(place_id)
+    apify_reviews = load_or_fetch_reviews(place["id"])
+    if apify_reviews:
+        place = {
+            **place,
+            "reviews": merge_review_sources(place.get("reviews", []), apify_reviews),
+        }
     summary, evidence, explanation = analyze_place(place, selected_allergens)
     menu_source = load_menu_source(place["id"])
     if menu_source is None and place.get("website_uri"):
@@ -134,6 +144,34 @@ async def get_place_menu_service(place_id: str) -> PlaceMenu:
     return load_place_menu(place_id)
 
 
+async def get_place_reviews_service(place_id: str) -> list[PlaceReviewSnippet]:
+    return load_cached_reviews(place_id)
+
+
+async def create_review_refresh_job(place_id: str) -> ReviewRefreshJob:
+    now = datetime.now(UTC).isoformat()
+    try:
+        reviews = fetch_apify_reviews(place_id)
+        status = "complete"
+        message = f"Captured {len(reviews)} Apify review{'s' if len(reviews) != 1 else ''}."
+    except Exception as exc:  # noqa: BLE001 - external provider failures should become a job result
+        reviews = []
+        status = "failed"
+        message = str(exc) or "Apify review fetch failed."
+
+    job = ReviewRefreshJob(
+        id=str(uuid4()),
+        place_id=place_id,
+        status=status,
+        message=message,
+        reviews_count=len(reviews),
+        created_at=now,
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+    REVIEW_REFRESH_JOBS[job.id] = job
+    return job
+
+
 async def create_menu_refresh_job(
     place_id: str,
     restaurant_name: str | None = None,
@@ -183,6 +221,37 @@ async def create_menu_refresh_job(
     )
     MENU_REFRESH_JOBS[job.id] = job
     return job
+
+
+def merge_review_sources(google_reviews: list[dict], external_reviews: list[PlaceReviewSnippet]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+
+    for review in external_reviews:
+        key = review.review_id or review.text
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(
+            {
+                "review_id": review.review_id,
+                "author_name": review.author_name,
+                "rating": review.rating,
+                "text": review.text,
+                "publish_time": review.publish_time,
+                "relative_publish_time": review.relative_publish_time,
+            }
+        )
+
+    for review in google_reviews:
+        text = review.get("text", "")
+        key = review.get("review_id") or text
+        if key in seen or not text:
+            continue
+        seen.add(key)
+        merged.append(review)
+
+    return merged
 
 
 async def index_restaurant_menu_service(restaurant_id: str) -> SearchIndexResponse:
