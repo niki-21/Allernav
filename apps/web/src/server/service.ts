@@ -2,7 +2,7 @@ import { ALLERGEN_OPTIONS } from "../lib/allergens.ts";
 import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, PlaceSummary, SearchResponse } from "../lib/types.ts";
 import { buildDecisionBrief } from "./briefing.ts";
 import { fetchBackendPlaceMenu, refreshBackendPlaceMenu } from "./fastapi.ts";
-import { GooglePlacesClient, type GooglePlaceDetails } from "./googlePlaces.ts";
+import { GooglePlacesClient, type GooglePlaceDetails, type GooglePlaceReview } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
 import { recommendMenuItems } from "./recommendations.ts";
 import { analyzePlace } from "./scoring.ts";
@@ -10,6 +10,33 @@ import { analyzePlace } from "./scoring.ts";
 export const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
 
 const ALLERGY_TAGS = new Set<AllergyTag>(ALLERGEN_OPTIONS.map((option) => option.value));
+
+const REVIEW_GENERIC_ALLERGY_TERMS = [
+  "allergy",
+  "allergic",
+  "allergen",
+  "cross contact",
+  "cross-contact",
+  "cross contamination",
+  "cross-contamination",
+  "dedicated fryer",
+  "separate fryer",
+  "gluten free",
+  "gluten-free",
+  "celiac",
+];
+
+const REVIEW_ALLERGEN_TERMS: Record<AllergyTag, string[]> = {
+  peanut: ["peanut", "peanuts", "peanut oil"],
+  tree_nut: ["tree nut", "tree nuts", "almond", "walnut", "cashew", "pecan", "pistachio", "hazelnut"],
+  dairy: ["dairy", "milk", "butter", "cheese", "cream", "lactose"],
+  egg: ["egg", "eggs", "mayo", "aioli"],
+  shellfish: ["shellfish", "shrimp", "prawn", "lobster", "crab", "scallop"],
+  fish: ["fish", "salmon", "tuna", "anchovy", "cod"],
+  soy: ["soy", "soybean", "soy sauce", "tofu", "edamame"],
+  sesame: ["sesame", "tahini"],
+  wheat_gluten: ["gluten", "wheat", "celiac", "flour", "bread", "pasta", "soy sauce"],
+};
 
 export interface SearchRequestPayload {
   query?: string;
@@ -46,6 +73,55 @@ function clampScore(value: number): number {
 
 function roundConfidence(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function reviewRelevanceScore(
+  review: GooglePlaceReview,
+  selectedAllergens: AllergyTag[],
+  evidenceReviewIds: Set<string>,
+): number {
+  const text = review.text.toLowerCase();
+  let score = evidenceReviewIds.has(review.review_id) ? 100 : 0;
+
+  for (const allergen of selectedAllergens) {
+    if (REVIEW_ALLERGEN_TERMS[allergen].some((term) => text.includes(term))) {
+      score += 25;
+    }
+  }
+  if (REVIEW_GENERIC_ALLERGY_TERMS.some((term) => text.includes(term))) {
+    score += 12;
+  }
+  if (typeof review.rating === "number" && review.rating <= 2) {
+    score += 3;
+  }
+  if (review.publish_time) {
+    const publishedAt = Date.parse(review.publish_time);
+    if (!Number.isNaN(publishedAt)) {
+      const ageDays = Math.floor((Date.now() - publishedAt) / (1000 * 60 * 60 * 24));
+      if (ageDays <= 365) {
+        score += 2;
+      }
+    }
+  }
+
+  return score;
+}
+
+function prioritizeReviewSnippets(
+  reviews: GooglePlaceReview[],
+  selectedAllergens: AllergyTag[],
+  evidenceReviewIds: Set<string>,
+): GooglePlaceReview[] {
+  return reviews
+    .filter((review) => review.text.trim().length > 0)
+    .map((review, index) => ({
+      review,
+      index,
+      score: reviewRelevanceScore(review, selectedAllergens, evidenceReviewIds),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, 5)
+    .map(({ review }) => review);
 }
 
 function buildMenuEvidenceSummary(
@@ -148,6 +224,8 @@ export async function getPlaceDetailsService(
     reviews: [...place.reviews, ...(localSnapshot?.reviews ?? [])],
   };
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
+  const evidenceReviewIds = new Set(evidence.map((item) => item.review_id));
+  const prioritizedReviews = prioritizeReviewSnippets(mergedPlace.reviews, selectedAllergens, evidenceReviewIds);
   const storedMenu = await fetchBackendPlaceMenu(place.id);
   const ingestedMenu =
     storedMenu ??
@@ -186,9 +264,7 @@ export async function getPlaceDetailsService(
     selected_allergens: selectedAllergens,
     score_summary: scoreSummary,
     evidence,
-    review_snippets: mergedPlace.reviews
-      .filter((review) => review.text.trim().length > 0)
-      .slice(0, 5)
+    review_snippets: prioritizedReviews
       .map((review) => ({
         review_id: review.review_id,
         author_name: review.author_name ?? null,

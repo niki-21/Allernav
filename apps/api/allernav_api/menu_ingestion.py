@@ -39,6 +39,9 @@ MENU_NAVIGATION_WORDS = {
     "careers",
     "privacy",
     "terms",
+    "press",
+    "gallery",
+    "merch",
 }
 
 SCHEDULE_WORDS = {
@@ -79,10 +82,27 @@ BEVERAGE_ONLY_WORDS = {
     "coffee",
     "tea",
     "spezi",
+    "cola",
+    "lemonade",
+    "espresso",
+    "latte",
+    "cappuccino",
     "lager",
     "ale",
     "ipa",
     "pilsner",
+}
+
+NON_DISH_SECTION_WORDS = {
+    "about",
+    "contact",
+    "events",
+    "gallery",
+    "hours",
+    "locations",
+    "private events",
+    "reservations",
+    "visit",
 }
 
 def default_db_path() -> Path:
@@ -492,6 +512,8 @@ def sanitize_sections(sections: Iterable[MenuSection]) -> list[MenuSection]:
     seen_sections: set[str] = set()
     for section in sections:
         title = clean_text(section.title) or "Menu"
+        if is_non_dish_section_title(title):
+            continue
         key = title.lower()
         items = dedupe_items(item for item in section.items if looks_like_real_menu_item(item.name, item.description))
         if not items or key in seen_sections:
@@ -516,9 +538,11 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_schedule_or_event_text(name, description):
         return False
+    if looks_like_non_dish_marketing_text(name, description):
+        return False
     if len([term for term in terms if term]) <= 1 and not description:
         return False
-    return menu_item_quality_score(name, description) >= 3
+    return menu_item_quality_score(name, description) >= 4
 
 
 def menu_item_quality_score(name: str, description: str | None = None) -> int:
@@ -545,9 +569,29 @@ def menu_item_quality_score(name: str, description: str | None = None) -> int:
         score -= 3
     if re.search(r"\b(hours?|open|closed|event|events|calendar|reservation|book|order online|located)\b", combined):
         score -= 3
+    if re.search(r"\b(gift cards?|newsletter|follow us|learn more|read more|sign up|subscribe|directions)\b", combined):
+        score -= 3
     if re.search(r"\b(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", combined):
         score -= 2
     return score
+
+
+def is_non_dish_section_title(title: str) -> bool:
+    normalized = title.lower().strip()
+    return normalized in NON_DISH_SECTION_WORDS or bool(
+        re.search(r"\b(hours?|events?|reservations?|contact|location|gallery|press)\b", normalized)
+    )
+
+
+def looks_like_non_dish_marketing_text(name: str, description: str | None = None) -> bool:
+    text = f"{name} {description or ''}".lower()
+    if re.search(r"\b(gift cards?|newsletter|follow us|instagram|facebook|tiktok|careers|privacy|terms)\b", text):
+        return True
+    if re.search(r"\b(order online|book now|reserve|make a reservation|view menu|download menu)\b", text):
+        return True
+    if re.search(r"\b(private events?|catering inquiries|press inquiries|located at|visit us)\b", text):
+        return True
+    return False
 
 
 def is_beverage_only(name: str, description: str | None = None) -> bool:
@@ -557,7 +601,7 @@ def is_beverage_only(name: str, description: str | None = None) -> bool:
     if not has_beverage:
         return False
     food_without_beverage = re.sub(
-        r"\b(beer|wine|cocktails?|drinks?|drink|soda|coffee|tea|spezi|lager|ale|ipa|pilsner|soft)\b",
+        r"\b(beer|wine|cocktails?|drinks?|drink|soda|coffee|tea|spezi|cola|lemonade|espresso|latte|cappuccino|lager|ale|ipa|pilsner|soft)\b",
         " ",
         text,
     )

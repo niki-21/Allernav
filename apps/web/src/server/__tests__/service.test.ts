@@ -84,6 +84,43 @@ test("getPlaceDetailsService stays cautious when reviews are missing", async () 
   assert.equal(response.score_summary.verdict, "use_caution");
 });
 
+test("getPlaceDetailsService prioritizes allergy-relevant Google review snippets", async () => {
+  const mixedReviewClient = {
+    ...fakeClient,
+    async getPlaceDetails(placeId: string) {
+      const place = await fakeClient.getPlaceDetails(placeId);
+      return {
+        ...place,
+        reviews: [
+          {
+            review_id: "generic-1",
+            rating: 5,
+            text: "Great patio and fast service.",
+            publish_time: "2026-01-10T12:00:00Z",
+          },
+          {
+            review_id: "generic-2",
+            rating: 4,
+            text: "The noodles were excellent.",
+            publish_time: "2026-01-11T12:00:00Z",
+          },
+          {
+            review_id: "allergy-1",
+            rating: 2,
+            text: "They warned me about cross-contact for my sesame allergy.",
+            publish_time: "2026-01-12T12:00:00Z",
+          },
+        ],
+      };
+    },
+  };
+
+  const response = await getPlaceDetailsService("alpha", ["sesame"], mixedReviewClient);
+
+  assert.equal(response.review_snippets[0]?.review_id, "allergy-1");
+  assert.equal(response.evidence[0]?.review_id, "allergy-1");
+});
+
 test("getPlaceDetailsService uses local snapshot menus for demo restaurants", async () => {
   const localSnapshotClient = {
     ...fakeClient,
