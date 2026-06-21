@@ -85,11 +85,11 @@ function reviewRelevanceScore(
   let score = evidenceReviewIds.has(review.review_id) ? 100 : 0;
 
   for (const allergen of selectedAllergens) {
-    if (REVIEW_ALLERGEN_TERMS[allergen].some((term) => text.includes(term))) {
+    if (REVIEW_ALLERGEN_TERMS[allergen].some((term) => termMatches(text, term))) {
       score += 25;
     }
   }
-  if (REVIEW_GENERIC_ALLERGY_TERMS.some((term) => text.includes(term))) {
+  if (REVIEW_GENERIC_ALLERGY_TERMS.some((term) => termMatches(text, term))) {
     score += 12;
   }
   if (typeof review.rating === "number" && review.rating <= 2) {
@@ -106,6 +106,21 @@ function reviewRelevanceScore(
   }
 
   return score;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function termMatches(text: string, term: string): boolean {
+  const normalizedTerm = term.toLowerCase().trim();
+  if (!normalizedTerm) {
+    return false;
+  }
+  const pattern = normalizedTerm.includes(" ")
+    ? escapeRegex(normalizedTerm).replace(/\s+/g, "\\s+")
+    : escapeRegex(normalizedTerm);
+  return new RegExp(`(^|[^a-z0-9])${pattern}([^a-z0-9]|$)`, "i").test(text);
 }
 
 function prioritizeReviewSnippets(
@@ -244,6 +259,8 @@ export async function getPlaceDetailsService(
   const place = await client.getPlaceDetails(placeId);
   const apifyReviews = await fetchApifyReviews(place.id);
   const localSnapshot = getLocalPlaceSnapshot(place.name);
+  const googleReviewCount = place.reviews.length;
+  const localReviewCount = localSnapshot?.reviews?.length ?? 0;
   const mergedPlace = {
     ...place,
     reviews: mergeReviewSources(
@@ -300,7 +317,17 @@ export async function getPlaceDetailsService(
         text: review.text,
         publish_time: review.publish_time ?? null,
         relative_publish_time: review.relative_publish_time ?? null,
-      })),
+      }))
+      .slice(0, 6),
+    review_source_summary: {
+      google_review_count: googleReviewCount,
+      expanded_review_count: apifyReviews.length,
+      local_snapshot_review_count: localReviewCount,
+      analyzed_review_count: mergedPlace.reviews.length,
+      displayed_review_count: Math.min(prioritizedReviews.length, 6),
+      expanded_reviews_configured: Boolean(process.env.APIFY_TOKEN?.trim()),
+      expanded_review_provider: "apify",
+    },
     photos: (place.photos ?? []).map((photo) => ({
       ...photo,
       url: `/api/place-photo?name=${encodeURIComponent(photo.name)}&maxWidthPx=900`,

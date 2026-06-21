@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from .models import (
     PlaceReviewSnippet,
     RestaurantContext,
     ReviewRefreshJob,
+    ReviewSourceSummary,
     SearchRequest,
     SearchResponse,
     SearchIndexResponse,
@@ -58,6 +60,7 @@ async def get_place_details_service(
 ) -> PlaceDetailsResponse:
     selected_allergens = allergens or [AllergyTag.PEANUT]
     place = client.get_place_details(place_id)
+    google_review_count = len(place.get("reviews", []))
     apify_reviews = load_or_fetch_reviews(place["id"])
     if apify_reviews:
         place = {
@@ -132,7 +135,16 @@ async def get_place_details_service(
             }
             for review in place.get("reviews", [])
             if review.get("text")
-        ][:5],
+        ][:6],
+        review_source_summary=ReviewSourceSummary(
+            google_review_count=google_review_count,
+            expanded_review_count=len(apify_reviews),
+            local_snapshot_review_count=0,
+            analyzed_review_count=len([review for review in place.get("reviews", []) if review.get("text")]),
+            displayed_review_count=min(6, len([review for review in place.get("reviews", []) if review.get("text")])),
+            expanded_reviews_configured=bool(os.getenv("APIFY_TOKEN", "").strip()),
+            expanded_review_provider="apify",
+        ),
         photos=place.get("photos", []),
         explanation=explanation,
         menu=menu if menu and menu.sections else None,

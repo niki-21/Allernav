@@ -91,6 +91,22 @@ NOISY_WEBSITE_MENU_HTML = """
 """
 
 
+MARKETING_COPY_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>Our crave-able craft began with an artist, a baker</h3>
+      <p>and a vision for the ultimate cookie decor.</p>
+    </article>
+    <article class="menu-item">
+      <h3>Chocolate Chip Cookie</h3>
+      <p>Butter, flour, chocolate chips, and vanilla.</p>
+    </article>
+  </section>
+</html>
+"""
+
+
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -133,6 +149,12 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(item_names, ["Sesame Chicken Bowl"])
         self.assertNotIn("Paulaner Sunset Spezi", raw_text)
         self.assertNotIn("private event", raw_text)
+
+    def test_rejects_brand_story_copy_that_mentions_food_words(self) -> None:
+        source = parse_menu_html(MARKETING_COPY_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+
+        self.assertEqual(item_names, ["Chocolate Chip Cookie"])
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(

@@ -135,3 +135,23 @@ test("generic bad-service complaints do not become allergy risk evidence", () =>
   assert.equal(summary.meaningful_evidence, false);
   assert.equal(evidence.length, 0);
 });
+
+test("allergen terms require word boundaries", () => {
+  const { summary, evidence } = analyzePlace(
+    {
+      rating: 1.5,
+      reviews: [
+        {
+          review_id: "1",
+          rating: 1,
+          text: "The music is very loud and the service was offish, but this review says nothing about food allergies.",
+          publish_time: "2026-03-15T12:00:00Z",
+        },
+      ],
+    },
+    ["fish"],
+  );
+
+  assert.equal(summary.evidence_count, 0);
+  assert.equal(evidence.length, 0);
+});

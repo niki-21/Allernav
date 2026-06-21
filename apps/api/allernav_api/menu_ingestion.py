@@ -591,6 +591,11 @@ def looks_like_non_dish_marketing_text(name: str, description: str | None = None
         return True
     if re.search(r"\b(private events?|catering inquiries|press inquiries|located at|visit us)\b", text):
         return True
+    if re.search(r"\b(our|we|us|story|vision|began|founded|artist|craft|crave-able|ultimate)\b", text) and not re.search(
+        r"\$\d|\b\d{1,3}\.\d{2}\b",
+        text,
+    ):
+        return True
     return False
 
 
