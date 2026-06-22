@@ -144,43 +144,25 @@ test("normalizeApifyReviews maps Apify review data", () => {
   assert.match(reviews[0]?.text ?? "", /sesame/);
 });
 
-test("getPlaceDetailsService uses Apify reviews when configured", async () => {
+test("getPlaceDetailsService defers Apify reviews even when configured", async () => {
   const previousToken = process.env.APIFY_TOKEN;
   const previousLimit = process.env.APIFY_REVIEWS_LIMIT;
   const previousFetch = globalThis.fetch;
   process.env.APIFY_TOKEN = "test-token";
   process.env.APIFY_REVIEWS_LIMIT = "25";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
-    assert.match(url.pathname, /\/actors\/kaix~google-maps-reviews-scraper\/run-sync-get-dataset-items$/);
-    assert.equal(url.searchParams.get("token"), "test-token");
-    const body = JSON.parse(String(init?.body));
-    assert.deepEqual(body.urls, ["https://www.google.com/maps/place/?q=place_id:apify-alpha"]);
-    assert.equal(body.maxReviews, 25);
-    assert.equal(body.sort, "newest");
-    assert.equal(body.language, "en");
-    assert.equal(body.region, "US");
-    assert.equal((init?.headers as Record<string, string>)["Content-Type"], "application/json");
-    return new Response(
-      JSON.stringify([
-        {
-          reviewId: "apify-review",
-          authorName: "Reviewer",
-          text: "I have a sesame allergy and had a reaction after cross-contact.",
-          rating: 1,
-          timestamp: 1780000000,
-        },
-      ]),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
+    const url = String(input);
+    assert.ok(!url.includes("api.apify.com"), "place details should not call Apify directly");
+    assert.equal(init?.method, undefined);
+    return new Response(JSON.stringify({ sections: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
 
   try {
     const response = await getPlaceDetailsService("apify-alpha", ["sesame"], fakeClient);
 
-    assert.equal(response.review_snippets[0]?.review_id, "apify-review");
-    assert.equal(response.score_summary.fit_verdict, "high_risk");
-    assert.ok(response.evidence.some((item) => item.review_id === "apify-review"));
+    assert.notEqual(response.review_snippets[0]?.review_id, "apify-review");
+    assert.equal(response.review_source_summary?.expanded_review_count, 0);
+    assert.equal(response.review_source_summary?.expanded_review_status, "deferred");
   } finally {
     if (previousToken === undefined) {
       delete process.env.APIFY_TOKEN;

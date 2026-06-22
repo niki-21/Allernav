@@ -28,7 +28,7 @@ from .models import (
     SearchIndexResponse,
     UserProfileResponse,
 )
-from .apify_reviews import fetch_apify_reviews, load_cached_reviews, load_or_fetch_reviews
+from .apify_reviews import fetch_apify_reviews, load_cached_reviews
 from .scoring import analyze_place
 
 
@@ -61,7 +61,7 @@ async def get_place_details_service(
     selected_allergens = allergens or [AllergyTag.PEANUT]
     place = client.get_place_details(place_id)
     google_review_count = len(place.get("reviews", []))
-    apify_reviews = load_or_fetch_reviews(place["id"])
+    apify_reviews = load_cached_reviews(place["id"])
     if apify_reviews:
         place = {
             **place,
@@ -69,13 +69,6 @@ async def get_place_details_service(
         }
     summary, evidence, explanation = analyze_place(place, selected_allergens)
     menu_source = load_menu_source(place["id"])
-    if menu_source is None and place.get("website_uri"):
-        ingested_source = ingest_menu_from_website(
-            restaurant_id=place["id"],
-            restaurant_name=place["name"],
-            website_url=place["website_uri"],
-        )
-        menu_source = ingested_source if ingested_source.sections else None
     menu = load_place_menu(place["id"]) if menu_source else None
     if not summary.fit_score:
         summary.fit_score = summary.score
@@ -93,7 +86,7 @@ async def get_place_details_service(
         context=RestaurantContext(
             restaurant_id=place["id"],
             restaurant_name=place["name"],
-            website_url=place.get("website_uri"),
+            website_url=place.get("website_uri") if menu_source else None,
             menu_sources=[menu_source] if menu_source else [],
         ),
     )
@@ -144,6 +137,9 @@ async def get_place_details_service(
             displayed_review_count=min(6, len([review for review in place.get("reviews", []) if review.get("text")])),
             expanded_reviews_configured=bool(os.getenv("APIFY_TOKEN", "").strip()),
             expanded_review_provider="apify",
+            expanded_review_status="loaded"
+            if apify_reviews
+            else ("deferred" if os.getenv("APIFY_TOKEN", "").strip() else "not_configured"),
         ),
         photos=place.get("photos", []),
         explanation=explanation,

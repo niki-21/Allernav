@@ -1,10 +1,9 @@
 import { ALLERGEN_OPTIONS } from "../lib/allergens.ts";
 import type { AllergyTag, LatLng, PlaceDetailsResponse, PlaceMenu, PlaceScoreSummary, PlaceSummary, SearchResponse } from "../lib/types.ts";
 import { buildDecisionBrief } from "./briefing.ts";
-import { fetchBackendPlaceMenu, refreshBackendPlaceMenu } from "./fastapi.ts";
+import { fetchBackendPlaceMenu } from "./fastapi.ts";
 import { GooglePlacesClient, type GooglePlaceDetails, type GooglePlaceReview } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
-import { fetchApifyReviews } from "./apifyReviews.ts";
 import { recommendMenuItems } from "./recommendations.ts";
 import { analyzePlace } from "./scoring.ts";
 
@@ -257,30 +256,18 @@ export async function getPlaceDetailsService(
 ): Promise<PlaceDetailsResponse> {
   const selectedAllergens: AllergyTag[] = allergens.length > 0 ? allergens : ["peanut"];
   const place = await client.getPlaceDetails(placeId);
-  const apifyReviews = await fetchApifyReviews(place.id);
   const localSnapshot = getLocalPlaceSnapshot(place.name);
   const googleReviewCount = place.reviews.length;
   const localReviewCount = localSnapshot?.reviews?.length ?? 0;
   const mergedPlace = {
     ...place,
-    reviews: mergeReviewSources(
-      [...place.reviews, ...(localSnapshot?.reviews ?? [])],
-      apifyReviews,
-    ),
+    reviews: mergeReviewSources([...place.reviews, ...(localSnapshot?.reviews ?? [])], []),
   };
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
   const evidenceReviewIds = new Set(evidence.map((item) => item.review_id));
   const prioritizedReviews = prioritizeReviewSnippets(mergedPlace.reviews, selectedAllergens, evidenceReviewIds);
   const storedMenu = await fetchBackendPlaceMenu(place.id);
-  const ingestedMenu =
-    storedMenu ??
-    (place.website_uri
-      ? await refreshBackendPlaceMenu(place.id, {
-          restaurantName: place.name,
-          websiteUrl: place.website_uri,
-        })
-      : null);
-  const menu = ingestedMenu ?? localSnapshot?.menu ?? null;
+  const menu = storedMenu ?? localSnapshot?.menu ?? null;
   const recommendedItems = await recommendMenuItems(place.name, selectedAllergens, menu, evidence);
   const scoreSummary = applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length);
   const decisionBrief = buildDecisionBrief(scoreSummary, evidence, menu, recommendedItems);
@@ -321,12 +308,13 @@ export async function getPlaceDetailsService(
       .slice(0, 6),
     review_source_summary: {
       google_review_count: googleReviewCount,
-      expanded_review_count: apifyReviews.length,
+      expanded_review_count: 0,
       local_snapshot_review_count: localReviewCount,
       analyzed_review_count: mergedPlace.reviews.length,
       displayed_review_count: Math.min(prioritizedReviews.length, 6),
       expanded_reviews_configured: Boolean(process.env.APIFY_TOKEN?.trim()),
       expanded_review_provider: "apify",
+      expanded_review_status: process.env.APIFY_TOKEN?.trim() ? "deferred" : "not_configured",
     },
     photos: (place.photos ?? []).map((photo) => ({
       ...photo,

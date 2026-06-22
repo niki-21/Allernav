@@ -68,6 +68,14 @@ def cache_ttl() -> timedelta:
         return timedelta(hours=168)
 
 
+def request_timeout_seconds() -> float:
+    raw = os.getenv("APIFY_TIMEOUT_SECONDS", "8")
+    try:
+        return float(min(12, max(1, float(raw))))
+    except ValueError:
+        return 8.0
+
+
 def load_cached_reviews(
     place_id: str,
     *,
@@ -177,7 +185,7 @@ def fetch_apify_reviews(
             params,
             body,
             {"Content-Type": "application/json"},
-            float(os.getenv("APIFY_TIMEOUT_SECONDS", "60")),
+            request_timeout_seconds(),
         )
     except (httpx.HTTPError, ValueError) as exc:
         raise ApifyReviewsError(str(exc)) from exc

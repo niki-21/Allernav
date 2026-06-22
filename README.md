@@ -238,12 +238,12 @@ APIFY_REGION=US
 APIFY_REVIEWS_SEARCH_QUERY=
 APIFY_REVIEWS_NEWER_THAN=
 APIFY_REVIEWS_OLDER_THAN=
-APIFY_TIMEOUT_SECONDS=60
+APIFY_TIMEOUT_SECONDS=8
 APIFY_REVIEWS_CACHE_TTL_HOURS=168
 ALLERNAV_REVIEWS_DB=./.data/apify_reviews.sqlite
 ```
 
-Apify reviews are treated as supplemental warning evidence. They can increase caution when allergy, cross-contact, staff knowledge, or reaction language appears, but they do not prove a dish is lower risk. Leave `APIFY_REVIEWS_SEARCH_QUERY` blank for the app default; AllerNav fetches a bounded review set and then locally ranks allergy-relevant language so it does not miss synonyms like celiac, cross-contact, dedicated fryer, peanut, sesame, or dairy.
+Apify reviews are treated as supplemental warning evidence. They can increase caution when allergy, cross-contact, staff knowledge, or reaction language appears, but they do not prove a dish is lower risk. Place details do not call Apify directly; expanded reviews are loaded through the explicit `/reviews-refresh` route so Vercel place-detail functions stay fast. Leave `APIFY_REVIEWS_SEARCH_QUERY` blank for the app default; AllerNav fetches a bounded review set and then locally ranks allergy-relevant language so it does not miss synonyms like celiac, cross-contact, dedicated fryer, peanut, sesame, or dairy.
 
 Backend checks:
 

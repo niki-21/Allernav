@@ -357,6 +357,7 @@ class ReviewSourceSummary(BaseModel):
     displayed_review_count: int = 0
     expanded_reviews_configured: bool = False
     expanded_review_provider: str | None = None
+    expanded_review_status: str | None = None
 
 
 class PlacePhoto(BaseModel):

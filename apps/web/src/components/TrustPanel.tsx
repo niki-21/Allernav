@@ -124,7 +124,9 @@ export default function TrustPanel({
           : "Very limited signal";
   const reviewSourceLine = reviewSource
     ? reviewSource.expanded_reviews_configured
-      ? reviewSource.expanded_review_count > 0
+      ? reviewSource.expanded_review_status === "deferred"
+        ? `Expanded Apify reviews are configured but loaded separately so place details stay fast. Showing ${reviewSource.google_review_count} Google snippet${reviewSource.google_review_count === 1 ? "" : "s"} now.`
+        : reviewSource.expanded_review_count > 0
         ? `Apify expanded reviews analyzed: ${reviewSource.expanded_review_count}. Showing ${reviewSource.displayed_review_count} most relevant of ${reviewSource.analyzed_review_count} total review snippets.`
         : `Apify is configured, but no expanded reviews were returned for this place. Showing ${reviewSource.google_review_count} Google snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
       : `Apify is not configured for this running server. Showing Google’s limited review sample of ${reviewSource.google_review_count} snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
