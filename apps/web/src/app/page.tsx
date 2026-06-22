@@ -11,7 +11,7 @@ import {
   ALLERGY_PROFILE_STORAGE_KEY,
   DEFAULT_ALLERGENS,
 } from "@/lib/allergens";
-import { askRestaurant, fetchPlaceDetails, searchPlaces } from "@/lib/api";
+import { analyzeRestaurant, askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
 import { rankPlaces, shouldShowSearchAreaButton } from "@/lib/placeRanking";
 import { applyPlaceDetailError, applyPlaceDetailSuccess, seedPlaceDetailsState } from "@/lib/placeState";
 import type { AllergyTag, AskRestaurantResponse, LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
@@ -37,6 +37,8 @@ export default function Home() {
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
   const requestSequence = useRef(0);
+  const menuRefreshAttempts = useRef<Set<string>>(new Set());
+  const agentAnalysisAttempts = useRef<Set<string>>(new Set());
   const [profileReady, setProfileReady] = useState(false);
 
   useEffect(() => {
@@ -174,6 +176,83 @@ export default function Home() {
     setDetailStates(seedPlaceDetailsState(places.map((place) => place.id)));
     void hydratePlaces(places, selectedAllergens, sequence);
   }, [hydratePlaces, places, profileReady, selectedAllergens, selectedAllergenKey]);
+
+  useEffect(() => {
+    if (!selectedPlaceId) {
+      return;
+    }
+
+    const detailState = detailStates[selectedPlaceId];
+    if (!detailState || detailState.status !== "ready") {
+      return;
+    }
+
+    const details = detailState.data;
+    const menuItemCount =
+      details.menu?.sections.reduce((count, section) => count + section.items.length, 0) ?? 0;
+
+    if (!details.menu && details.website_uri && !menuRefreshAttempts.current.has(details.id)) {
+      menuRefreshAttempts.current.add(details.id);
+      void (async () => {
+        try {
+          await refreshPlaceMenu(details.id, {
+            placeName: details.name,
+            websiteUrl: details.website_uri,
+          });
+          const refreshedDetails = await fetchPlaceDetails(details.id, selectedAllergens);
+          setDetailStates((current) => {
+            const currentState = current[details.id];
+            if (!currentState || currentState.status !== "ready") {
+              return current;
+            }
+            return applyPlaceDetailSuccess(current, details.id, {
+              ...refreshedDetails,
+              agent_recommendation: currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
+            });
+          });
+        } catch {
+          // Menu ingestion is best-effort. Keep the already-loaded place details visible.
+          setDetailStates((current) => ({ ...current }));
+        }
+      })();
+      return;
+    }
+
+    const agentKey = `${details.id}:${selectedAllergenKey}:${menuItemCount}`;
+    if (details.agent_recommendation || agentAnalysisAttempts.current.has(agentKey)) {
+      return;
+    }
+
+    agentAnalysisAttempts.current.add(agentKey);
+    void (async () => {
+      try {
+        const recommendation = await analyzeRestaurant(
+          details.id,
+          details.name,
+          selectedAllergens,
+          details.website_uri,
+        );
+        setDetailStates((current) => {
+          const currentState = current[details.id];
+          if (!currentState || currentState.status !== "ready") {
+            return current;
+          }
+          return {
+            ...current,
+            [details.id]: {
+              status: "ready",
+              data: {
+                ...currentState.data,
+                agent_recommendation: recommendation,
+              },
+            },
+          };
+        });
+      } catch {
+        // If FastAPI or LangSmith tracing is not configured, the place panel should still work.
+      }
+    })();
+  }, [detailStates, selectedAllergens, selectedAllergenKey, selectedPlaceId]);
 
   const toggleAllergen = (allergen: AllergyTag) => {
     setSelectedAllergens((current) => {
