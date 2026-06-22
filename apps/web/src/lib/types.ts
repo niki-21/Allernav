@@ -90,6 +90,7 @@ export interface ReviewSourceSummary {
   displayed_review_count: number;
   expanded_reviews_configured: boolean;
   expanded_review_provider?: "apify" | null;
+  expanded_review_status?: "not_configured" | "deferred" | "loaded" | "failed";
 }
 
 export interface PlacePhoto {
@@ -136,6 +137,17 @@ export interface MenuRefreshJob {
   place_id: string;
   status: "queued" | "running" | "complete" | "failed";
   message: string;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface ReviewRefreshJob {
+  id: string;
+  place_id: string;
+  status: "queued" | "running" | "complete" | "failed" | "skipped";
+  message: string;
+  reviews_count: number;
+  reviews?: PlaceReviewSnippet[];
   created_at: string;
   completed_at?: string | null;
 }

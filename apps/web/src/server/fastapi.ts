@@ -27,6 +27,24 @@ export interface RefreshMenuContext {
   websiteUrl?: string | null;
 }
 
+function timeoutMs(envName: string, fallback: number): number {
+  const parsed = Number(process.env[envName]);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(500, Math.min(30_000, Math.trunc(parsed)));
+}
+
+async function fetchWithTimeout(url: URL | string, init: RequestInit, timeout: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function cleanBaseUrl(value: string | undefined): string | null {
   if (!value?.trim()) {
     return null;
@@ -128,7 +146,7 @@ export async function fetchBackendPlaceMenu(placeId: string): Promise<PlaceMenu 
   }
 
   try {
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetchWithTimeout(url, { cache: "no-store" }, timeoutMs("FASTAPI_READ_TIMEOUT_MS", 2500));
     if (!response.ok) {
       return null;
     }
@@ -156,7 +174,11 @@ export async function refreshBackendPlaceMenu(
   }
 
   try {
-    const response = await fetch(refreshUrl, { method: "POST", cache: "no-store" });
+    const response = await fetchWithTimeout(
+      refreshUrl,
+      { method: "POST", cache: "no-store" },
+      timeoutMs("FASTAPI_REFRESH_TIMEOUT_MS", 12_000),
+    );
     if (!response.ok) {
       return null;
     }

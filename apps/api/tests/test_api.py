@@ -75,7 +75,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(dumped["allergens"], ["peanut"])
 
     def test_place_details_response_shape(self) -> None:
-        with patch("allernav_api.service.load_or_fetch_reviews", return_value=[]):
+        with patch("allernav_api.service.load_cached_reviews", return_value=[]):
             response = asyncio.run(
                 get_place_details_service(
                     "alpha",
@@ -91,9 +91,9 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(dumped["evidence"]), 1)
         self.assertIn("explanation", dumped)
 
-    def test_place_details_uses_apify_reviews_when_available(self) -> None:
+    def test_place_details_uses_cached_apify_reviews_when_available(self) -> None:
         with patch(
-            "allernav_api.service.load_or_fetch_reviews",
+            "allernav_api.service.load_cached_reviews",
             return_value=[
                 PlaceReviewSnippet(
                     review_id="apify-1",
@@ -115,6 +115,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.review_snippets[0].review_id, "apify-1")
         self.assertEqual(response.score_summary.verdict.value, "high_risk")
         self.assertTrue(any(item.review_id == "apify-1" for item in response.evidence))
+        self.assertEqual(response.review_source_summary.expanded_review_status, "loaded")
 
     def test_missing_reviews_is_handled(self) -> None:
         class NoReviewClient(FakePlacesClient):
@@ -123,7 +124,7 @@ class ApiTests(unittest.TestCase):
                 place["reviews"] = []
                 return place
 
-        with patch("allernav_api.service.load_or_fetch_reviews", return_value=[]):
+        with patch("allernav_api.service.load_cached_reviews", return_value=[]):
             response = asyncio.run(
                 get_place_details_service(
                     "alpha",

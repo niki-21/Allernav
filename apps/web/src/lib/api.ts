@@ -5,6 +5,7 @@ import type {
   LatLng,
   MenuRefreshJob,
   PlaceDetailsResponse,
+  ReviewRefreshJob,
   SearchResponse,
 } from "./types";
 
@@ -72,6 +73,16 @@ export async function refreshPlaceMenu(
     throw new Error(await response.text());
   }
   return (await response.json()) as MenuRefreshJob;
+}
+
+export async function refreshPlaceReviews(placeId: string): Promise<ReviewRefreshJob> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/reviews-refresh`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as ReviewRefreshJob;
 }
 
 export async function askRestaurant(

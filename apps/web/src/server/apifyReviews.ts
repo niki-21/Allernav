@@ -74,6 +74,14 @@ function cacheTtlMs(): number {
   return hours * 60 * 60 * 1000;
 }
 
+function requestTimeoutMs(): number {
+  const parsed = Number(process.env.APIFY_WEB_TIMEOUT_SECONDS ?? process.env.APIFY_TIMEOUT_SECONDS ?? "8");
+  if (!Number.isFinite(parsed)) {
+    return 8000;
+  }
+  return Math.max(1000, Math.min(12_000, Math.trunc(parsed * 1000)));
+}
+
 function firstString(review: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = stringValue(review[key]);
@@ -224,12 +232,15 @@ export async function fetchApifyReviews(placeId: string): Promise<GooglePlaceRev
   const url = new URL(`${baseUrl.replace(/\/$/, "")}/actors/${actorPath()}/run-sync-get-dataset-items`);
   url.searchParams.set("token", token);
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs());
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildApifyInput(placeId)),
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!response.ok) {
       return [];
@@ -242,5 +253,7 @@ export async function fetchApifyReviews(placeId: string): Promise<GooglePlaceRev
     return reviews;
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
