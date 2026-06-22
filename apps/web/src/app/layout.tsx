@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AllerNav — Agentic AI Dining Safety Assistant",
-  description: "Agentic AI support for safer dining decisions using allergy fit, review evidence, and menu signals.",
+  description:
+    "Evidence-backed dining decision support that surfaces allergen risks, missing information, and recommended questions for restaurant staff.",
 };
 
 export default function RootLayout({

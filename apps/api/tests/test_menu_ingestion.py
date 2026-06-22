@@ -8,6 +8,8 @@ from pathlib import Path
 from allernav_api.agent_graph import run_dining_safety_graph
 from allernav_api.document_intelligence import DocumentExtraction
 from allernav_api.menu_ingestion import (
+    discover_candidate_urls,
+    extract_candidate_menu_urls,
     ingest_menu_from_website,
     load_menu_source,
     load_place_menu,
@@ -107,6 +109,26 @@ MARKETING_COPY_HTML = """
 """
 
 
+PROMO_AND_PREP_COPY_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>Sauced, fried or grilled</h3>
+      <p>and always better with ranch.</p>
+    </article>
+    <article class="menu-item">
+      <h3>3 for Me</h3>
+      <p>just pick your beverage, starter and main. Then get the best value meal; starting at $10.99.</p>
+    </article>
+    <article class="menu-item">
+      <h3>Crispy Chicken Sandwich</h3>
+      <p>Fried chicken, slaw, pickles, and ranch on a toasted bun.</p>
+    </article>
+  </section>
+</html>
+"""
+
+
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -156,6 +178,15 @@ class MenuIngestionTests(unittest.TestCase):
 
         self.assertEqual(item_names, ["Chocolate Chip Cookie"])
 
+    def test_rejects_deal_and_preparation_copy_without_dish_nouns(self) -> None:
+        source = parse_menu_html(PROMO_AND_PREP_COPY_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+        raw_text = source.raw_text or ""
+
+        self.assertEqual(item_names, ["Crispy Chicken Sandwich"])
+        self.assertNotIn("Sauced, fried or grilled", raw_text)
+        self.assertNotIn("3 for Me", raw_text)
+
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(
             source_type=SourceType.RESTAURANT_WEBSITE,
@@ -202,6 +233,46 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.source_url, "https://restaurant.example/menu")
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.sections[0].items[0].name, "Chicken Alfredo")
+
+    def test_discovers_common_menu_paths_when_homepage_has_no_menu_link(self) -> None:
+        candidates = discover_candidate_urls(
+            "https://restaurant.example/",
+            fetch_html=lambda url: "<html>No menu links here</html>" if url == "https://restaurant.example/" else None,
+        )
+
+        self.assertIn("https://restaurant.example/menu", candidates)
+        self.assertIn("https://restaurant.example/food-menu", candidates)
+        self.assertIn("https://restaurant.example/menu.pdf", candidates)
+
+    def test_prioritizes_pdf_and_provider_menu_links_from_homepage(self) -> None:
+        links = extract_candidate_menu_urls(
+            """
+            <a href="/order">Order online</a>
+            <a href="https://example.toasttab.com/restaurants/demo/menu">Toast Menu</a>
+            <a href="/files/dinner.pdf">Dinner PDF</a>
+            """,
+            "https://restaurant.example/",
+        )
+
+        self.assertEqual(links[0], "https://restaurant.example/order")
+        candidates = discover_candidate_urls(
+            "https://restaurant.example/",
+            fetch_html=lambda url: (
+                """
+                <a href="/order">Order online</a>
+                <a href="https://example.toasttab.com/restaurants/demo/menu">Toast Menu</a>
+                <a href="/files/dinner.pdf">Dinner PDF</a>
+                """
+                if url == "https://restaurant.example/"
+                else None
+            ),
+        )
+
+        self.assertLess(candidates.index("https://restaurant.example/files/dinner.pdf"), candidates.index("https://restaurant.example/order"))
+        self.assertLess(
+            candidates.index("https://example.toasttab.com/restaurants/demo/menu"),
+            candidates.index("https://restaurant.example/order"),
+        )
 
     def test_ingests_pdf_menu_document_with_azure_extraction_shape(self) -> None:
         pages = {

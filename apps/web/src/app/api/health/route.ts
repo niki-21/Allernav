@@ -16,6 +16,10 @@ export async function GET() {
     hasEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY") ||
     hasEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
   const supabaseServiceConfigured = hasEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const fastApiConfigured =
+    hasEnv("FASTAPI_API_BASE_URL") ||
+    hasEnv("NEXT_PUBLIC_FASTAPI_API_BASE_URL") ||
+    hasEnv("NEXT_PUBLIC_API_BASE_URL");
 
   return NextResponse.json({
     ok: googleServerConfigured && googleClientConfigured,
@@ -27,6 +31,7 @@ export async function GET() {
       gemini_recommendations: geminiConfigured,
       supabase_public: supabaseUrlConfigured && supabasePublicKeyConfigured,
       supabase_service: supabaseUrlConfigured && supabaseServiceConfigured,
+      fastapi_agent_backend: fastApiConfigured,
     },
   });
 }

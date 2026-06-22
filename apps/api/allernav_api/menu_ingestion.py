@@ -105,6 +105,58 @@ NON_DISH_SECTION_WORDS = {
     "visit",
 }
 
+PROMO_OR_DEAL_WORDS = {
+    "combo",
+    "deal",
+    "deals",
+    "value",
+    "meal",
+    "meals",
+    "bundle",
+    "bundles",
+    "special",
+    "specials",
+    "starting",
+    "starts",
+}
+
+PREPARATION_ONLY_WORDS = {
+    "sauced",
+    "fried",
+    "grilled",
+    "roasted",
+    "steamed",
+    "crispy",
+    "baked",
+    "spicy",
+    "mild",
+    "hot",
+}
+
+MENU_PATH_CANDIDATES = (
+    "/menu",
+    "/menus",
+    "/food-menu",
+    "/dinner-menu",
+    "/lunch-menu",
+    "/brunch-menu",
+    "/main-menu",
+    "/restaurant-menu",
+    "/menu.pdf",
+    "/menus/menu.pdf",
+    "/assets/menu.pdf",
+)
+
+THIRD_PARTY_MENU_HOSTS = (
+    "toasttab.com",
+    "popmenu.com",
+    "singleplatform.com",
+    "chownow.com",
+    "menupages.com",
+    "zmenu.com",
+)
+
+
 def default_db_path() -> Path:
     configured = os.getenv("ALLERNAV_MENU_DB")
     if configured:
@@ -329,10 +381,13 @@ def discover_candidate_urls(website_url: str, fetch_html: FetchHtml | None = Non
     fetcher = fetch_html or fetch_html_url
     homepage = fetcher(normalized)
     if homepage:
-        for url in extract_candidate_menu_urls(homepage, normalized):
+        for url in sorted(extract_candidate_menu_urls(homepage, normalized), key=candidate_url_priority):
             if url not in candidates:
                 candidates.append(url)
-    return candidates[:4]
+    for url in common_menu_url_candidates(normalized):
+        if url not in candidates:
+            candidates.append(url)
+    return candidates[:10]
 
 
 def fetch_html_url(url: str) -> str | None:
@@ -445,11 +500,49 @@ def extract_candidate_menu_urls(html_text: str, base_url: str) -> list[str]:
         text = html_to_text(label).lower()
         target = href.lower()
         absolute = absolute_url(href, base_url)
-        if not re.search(r"menu|food|dinner|lunch|brunch|order", f"{target} {text}") and not looks_like_document_url(absolute):
+        if not absolute:
+            continue
+        signal_text = f"{target} {text} {parse.urlparse(absolute).netloc.lower()}"
+        if (
+            not re.search(r"menu|food|dinner|lunch|brunch|order|toast|popmenu|singleplatform|chownow", signal_text)
+            and not looks_like_document_url(absolute)
+            and not is_known_menu_provider_url(absolute)
+        ):
             continue
         if absolute and absolute not in urls:
             urls.append(absolute)
     return urls
+
+
+def common_menu_url_candidates(base_url: str) -> list[str]:
+    parsed = parse.urlparse(base_url)
+    root = parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+    return [parse.urljoin(root, path) for path in MENU_PATH_CANDIDATES]
+
+
+def candidate_url_priority(url: str) -> tuple[int, str]:
+    parsed = parse.urlparse(url)
+    path = parsed.path.lower()
+    host = parsed.netloc.lower()
+    if looks_like_document_url(url):
+        return (0, url)
+    if is_known_menu_provider_url(url):
+        return (1, url)
+    if re.search(r"/(menu|menus|food-menu|dinner-menu|lunch-menu|brunch-menu)(/|$)", path):
+        return (2, url)
+    if re.search(r"(menu|food|dinner|lunch|brunch)", path):
+        return (3, url)
+    if "order" in path or "order" in host:
+        return (4, url)
+    return (5, url)
+
+
+def is_known_menu_provider_url(url: str) -> bool:
+    try:
+        host = parse.urlparse(url).netloc.lower()
+    except ValueError:
+        return False
+    return any(provider in host for provider in THIRD_PARTY_MENU_HOSTS)
 
 
 def extract_menu_sections(value: Any, fallback_title: str = "Menu") -> list[MenuSection]:
@@ -540,6 +633,10 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_non_dish_marketing_text(name, description):
         return False
+    if looks_like_meal_deal_or_promo(name, description):
+        return False
+    if looks_like_preparation_phrase_without_dish(name, description):
+        return False
     if len([term for term in terms if term]) <= 1 and not description:
         return False
     return menu_item_quality_score(name, description) >= 4
@@ -599,6 +696,41 @@ def looks_like_non_dish_marketing_text(name: str, description: str | None = None
     return False
 
 
+def looks_like_meal_deal_or_promo(name: str, description: str | None = None) -> bool:
+    normalized_name = name.lower()
+    text = f"{name} {description or ''}".lower()
+    tokens = set(re.split(r"[^a-z0-9]+", text))
+    has_price = bool(re.search(r"\$\d|\b\d{1,3}\.\d{2}\b", text))
+    has_food_noun = has_menu_item_noun(text)
+
+    if re.fullmatch(r"\d+\s+(for|fo)\s+\w+", normalized_name):
+        return True
+    if re.search(r"\b\d+\s+for\s+\w+\b", normalized_name) and not has_food_noun:
+        return True
+    if any(word in tokens for word in PROMO_OR_DEAL_WORDS) and re.search(
+        r"\b(pick|choose|select|get|starting at|best value|beverage|starter|main)\b",
+        text,
+    ):
+        return True
+    if has_price and re.search(r"\b(starting at|value meal|pick your|beverage,?\s+starter|main)\b", text) and not has_food_noun:
+        return True
+    return False
+
+
+def looks_like_preparation_phrase_without_dish(name: str, description: str | None = None) -> bool:
+    normalized_name = name.lower()
+    text = f"{name} {description or ''}".lower()
+    tokens = [term for term in re.split(r"[^a-z0-9]+", normalized_name) if term]
+    if not tokens:
+        return False
+    prep_token_count = sum(1 for token in tokens if token in PREPARATION_ONLY_WORDS or token in {"or", "and"})
+    if prep_token_count >= len(tokens) - 1 and not has_menu_item_noun(text):
+        return True
+    if re.fullmatch(r"(sauced|fried|grilled|roasted|steamed|crispy)(,\s*|\s+or\s+|\s+and\s+).+", normalized_name):
+        return not has_menu_item_noun(text)
+    return False
+
+
 def is_beverage_only(name: str, description: str | None = None) -> bool:
     text = f"{name} {description or ''}".lower()
     tokens = set(re.split(r"[^a-z0-9]+", text))
@@ -636,6 +768,21 @@ def looks_like_food_text(text: str) -> bool:
             r"sesame|peanut|soy|bread|flour|vegetable|tomato|greens|beans|soup|"
             r"cake|dessert|cookie|fries|fried|grilled|roasted|steamed|spicy|"
             r"dumpling|curry|kebab|falafel|hummus|gyro|steak|rib|wings|sausage"
+            r")\b",
+            text,
+        )
+    )
+
+
+def has_menu_item_noun(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"bowl|noodle|noodles|pasta|sandwich|salad|roll|taco|burger|pizza|"
+            r"chicken|beef|pork|fish|salmon|tuna|shrimp|crab|tofu|egg|eggs|cheese|"
+            r"vegetable|tomato|greens|beans|soup|cake|dessert|cookie|cookies|fries|"
+            r"dumpling|curry|kebab|falafel|hummus|gyro|steak|rib|ribs|wings|sausage|"
+            r"burrito|quesadilla|nachos|toast|omelet|omelette|pancake|waffle|rice"
             r")\b",
             text,
         )
