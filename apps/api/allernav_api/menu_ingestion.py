@@ -133,6 +133,30 @@ PREPARATION_ONLY_WORDS = {
     "hot",
 }
 
+MENU_PATH_CANDIDATES = (
+    "/menu",
+    "/menus",
+    "/food-menu",
+    "/dinner-menu",
+    "/lunch-menu",
+    "/brunch-menu",
+    "/main-menu",
+    "/restaurant-menu",
+    "/menu.pdf",
+    "/menus/menu.pdf",
+    "/assets/menu.pdf",
+)
+
+THIRD_PARTY_MENU_HOSTS = (
+    "toasttab.com",
+    "popmenu.com",
+    "singleplatform.com",
+    "chownow.com",
+    "menupages.com",
+    "zmenu.com",
+)
+
+
 def default_db_path() -> Path:
     configured = os.getenv("ALLERNAV_MENU_DB")
     if configured:
@@ -357,10 +381,13 @@ def discover_candidate_urls(website_url: str, fetch_html: FetchHtml | None = Non
     fetcher = fetch_html or fetch_html_url
     homepage = fetcher(normalized)
     if homepage:
-        for url in extract_candidate_menu_urls(homepage, normalized):
+        for url in sorted(extract_candidate_menu_urls(homepage, normalized), key=candidate_url_priority):
             if url not in candidates:
                 candidates.append(url)
-    return candidates[:4]
+    for url in common_menu_url_candidates(normalized):
+        if url not in candidates:
+            candidates.append(url)
+    return candidates[:10]
 
 
 def fetch_html_url(url: str) -> str | None:
@@ -473,11 +500,49 @@ def extract_candidate_menu_urls(html_text: str, base_url: str) -> list[str]:
         text = html_to_text(label).lower()
         target = href.lower()
         absolute = absolute_url(href, base_url)
-        if not re.search(r"menu|food|dinner|lunch|brunch|order", f"{target} {text}") and not looks_like_document_url(absolute):
+        if not absolute:
+            continue
+        signal_text = f"{target} {text} {parse.urlparse(absolute).netloc.lower()}"
+        if (
+            not re.search(r"menu|food|dinner|lunch|brunch|order|toast|popmenu|singleplatform|chownow", signal_text)
+            and not looks_like_document_url(absolute)
+            and not is_known_menu_provider_url(absolute)
+        ):
             continue
         if absolute and absolute not in urls:
             urls.append(absolute)
     return urls
+
+
+def common_menu_url_candidates(base_url: str) -> list[str]:
+    parsed = parse.urlparse(base_url)
+    root = parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+    return [parse.urljoin(root, path) for path in MENU_PATH_CANDIDATES]
+
+
+def candidate_url_priority(url: str) -> tuple[int, str]:
+    parsed = parse.urlparse(url)
+    path = parsed.path.lower()
+    host = parsed.netloc.lower()
+    if looks_like_document_url(url):
+        return (0, url)
+    if is_known_menu_provider_url(url):
+        return (1, url)
+    if re.search(r"/(menu|menus|food-menu|dinner-menu|lunch-menu|brunch-menu)(/|$)", path):
+        return (2, url)
+    if re.search(r"(menu|food|dinner|lunch|brunch)", path):
+        return (3, url)
+    if "order" in path or "order" in host:
+        return (4, url)
+    return (5, url)
+
+
+def is_known_menu_provider_url(url: str) -> bool:
+    try:
+        host = parse.urlparse(url).netloc.lower()
+    except ValueError:
+        return False
+    return any(provider in host for provider in THIRD_PARTY_MENU_HOSTS)
 
 
 def extract_menu_sections(value: Any, fallback_title: str = "Menu") -> list[MenuSection]:

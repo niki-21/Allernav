@@ -28,7 +28,7 @@ function buildCautionFlags(
     flags.push("Confidence is still limited");
   }
   if (!menu || menu.sections.length === 0) {
-    flags.push("No menu snapshot found");
+    flags.push("No reliable dish-level menu found");
   }
   if (hasSignal(evidence, "cross_contact_risk")) {
     flags.push("Cross-contact mentioned in reviews");
@@ -58,11 +58,11 @@ export function buildDecisionBrief(
   let recommendedAction = `Use this as a backup option and verify ingredients and prep details before ordering.`;
 
   if (!summary.meaningful_evidence && menu && menu.sections.length > 0) {
-    headline = recommendedItems.length > 0 ? "Menu-led read" : "Harder fit from the menu";
+    headline = recommendedItems.length > 0 ? "Menu evidence read" : "Harder read from menu evidence";
     summaryText =
       recommendedItems.length > 0
-        ? "No allergy-specific reviews showed up, so this read is mostly coming from the local menu snapshot."
-        : "No allergy-specific reviews showed up, and the menu snapshot still looks harder to navigate for this allergy set.";
+        ? "No allergy-specific reviews showed up, so this read is mostly coming from available menu evidence."
+        : "No allergy-specific reviews showed up, and the menu evidence still looks harder to navigate for this allergy set.";
     recommendedAction =
       recommendedItems.length > 0
         ? "Use one of the simpler items below as a starting point, then confirm prep."
@@ -78,7 +78,7 @@ export function buildDecisionBrief(
     summaryText = summary.meaningful_evidence
       ? `The available evidence leans more risky than reassuring.`
       : `Even with limited reviews, the available signals lean risky for this allergy set.`;
-    recommendedAction = `Choose another option first if you can. Only continue if the restaurant can clearly explain a safer prep path.`;
+    recommendedAction = `Choose another option first if you can. Only continue if the restaurant can clearly explain a lower-risk prep path.`;
   } else if (summary.meaningful_evidence) {
     headline = `Possible fit, but verify before ordering`;
     summaryText = `The review scan found mixed evidence: ${positiveCount} reassuring signal${positiveCount === 1 ? "" : "s"} and ${negativeCount} caution note${negativeCount === 1 ? "" : "s"}.`;

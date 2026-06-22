@@ -115,13 +115,9 @@ export default function TrustPanel({
   const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
   const signalSource =
-    reviewSignalCount > 0 && menuItemCount > 0
-      ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"} + ${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"}`
-      : reviewSignalCount > 0
+    reviewSignalCount > 0
         ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"}`
-        : menuItemCount > 0
-          ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"}`
-          : "Very limited signal";
+        : "No allergy-specific review signals";
   const reviewSourceLine = reviewSource
     ? reviewSource.expanded_reviews_configured
       ? reviewSource.expanded_review_status === "deferred"
@@ -151,7 +147,7 @@ export default function TrustPanel({
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
         <p className="compact-score-row">
-          Allergy fit score {data.score_summary.fit_score}/100 · {confidencePercent}% confidence · verify before ordering
+          Evidence score {data.score_summary.fit_score}/100 · {confidencePercent}% source confidence · verify before ordering
         </p>
       </div>
 
@@ -230,8 +226,8 @@ export default function TrustPanel({
               <strong>Menu</strong>
               <p>
                 {menuItemCount > 0
-                  ? `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} found. Inferred items are never labeled safe.`
-                  : "No reliable menu items extracted yet."}
+                  ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                  : "No reliable dish-level menu found yet."}
               </p>
             </div>
             {data.menu?.source_url && (
@@ -292,10 +288,10 @@ export default function TrustPanel({
             </div>
           ) : (
             <article className="empty-menu-state">
-              <strong>No dish-level menu captured</strong>
+              <strong>No reliable dish-level menu found</strong>
               <p>
-                Official menu pages, PDFs, and accessible menu images are checked when available. If extraction is too
-                weak or only returns hours/events, AllerNav keeps this as insufficient evidence.
+                AllerNav checked available menu sources but did not find structured dish names with usable ingredient
+                context. This is insufficient evidence, not a safety signal.
               </p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">

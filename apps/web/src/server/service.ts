@@ -168,18 +168,18 @@ function buildMenuEvidenceSummary(
   sharedPrepCount: number,
 ): string {
   if (riskyCount >= Math.max(3, recommendedCount + 2) || sharedPrepCount >= 2) {
-    return "Menu snapshot leans risky for selected allergens";
+    return "Menu evidence leans risky for selected allergens";
   }
   if (recommendedCount >= 2) {
-    return "Menu snapshot shows a few lower-risk options";
+    return "Menu evidence shows a few lower-risk items to verify";
   }
   if (recommendedCount === 1) {
-    return "Menu snapshot shows one simpler option";
+    return "Menu evidence shows one simpler item to verify";
   }
   if (riskyCount > 0) {
-    return "Menu snapshot is mixed for selected allergens";
+    return "Menu evidence is mixed for selected allergens";
   }
-  return "Menu snapshot only";
+  return "Menu evidence only";
 }
 
 function applyMenuSignals(
