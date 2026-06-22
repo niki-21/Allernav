@@ -151,7 +151,7 @@ export default function TrustPanel({
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
         <p className="compact-score-row">
-          Allergy fit {data.score_summary.fit_score} · {confidencePercent}% confidence · verify before ordering
+          Allergy fit score {data.score_summary.fit_score}/100 · {confidencePercent}% confidence · verify before ordering
         </p>
       </div>
 
@@ -365,28 +365,6 @@ export default function TrustPanel({
               })}
             </div>
           </div>
-
-          {agentRecommendation && agentRecommendation.evidence.length > 0 && (
-            <div className="review-group">
-              <strong>Menu evidence</strong>
-              <div className="evidence-list compact">
-                {agentRecommendation.evidence.slice(0, 4).map((item) => (
-                  <article key={item.id} className="evidence-item">
-                    <div className="evidence-item-header">
-                      <span>{item.dish_name ?? "Menu source"}</span>
-                      <span>{formatRiskLabel(item.source_type)}</span>
-                    </div>
-                    <p className="evidence-excerpt">{item.text}</p>
-                    {item.matched_allergens.length > 0 && (
-                      <p className="review-source-line">
-                        Matched {item.matched_allergens.map((allergen) => allergen.replace("_", " ")).join(", ")}
-                      </p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
 
           {data.evidence.length === 0 && reviewSnippets.length > 0 && (
             <div className="review-group">

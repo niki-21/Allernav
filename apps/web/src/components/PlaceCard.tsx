@@ -35,7 +35,7 @@ const PlaceCard = forwardRef<HTMLButtonElement, PlaceCardProps>(function PlaceCa
 
       {detailState?.status === "error" && <p className="place-card-error">Details unavailable right now.</p>}
 
-      {isReady && <p className="place-card-meta">Allergy fit {detailState.data.score_summary.fit_score} · verify menu</p>}
+      {isReady && <p className="place-card-meta">Allergy fit {detailState.data.score_summary.fit_score}/100 · verify menu</p>}
     </button>
   );
 });

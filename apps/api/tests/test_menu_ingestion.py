@@ -107,6 +107,26 @@ MARKETING_COPY_HTML = """
 """
 
 
+PROMO_AND_PREP_COPY_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>Sauced, fried or grilled</h3>
+      <p>and always better with ranch.</p>
+    </article>
+    <article class="menu-item">
+      <h3>3 for Me</h3>
+      <p>just pick your beverage, starter and main. Then get the best value meal; starting at $10.99.</p>
+    </article>
+    <article class="menu-item">
+      <h3>Crispy Chicken Sandwich</h3>
+      <p>Fried chicken, slaw, pickles, and ranch on a toasted bun.</p>
+    </article>
+  </section>
+</html>
+"""
+
+
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -155,6 +175,15 @@ class MenuIngestionTests(unittest.TestCase):
         item_names = [item.name for section in source.sections for item in section.items]
 
         self.assertEqual(item_names, ["Chocolate Chip Cookie"])
+
+    def test_rejects_deal_and_preparation_copy_without_dish_nouns(self) -> None:
+        source = parse_menu_html(PROMO_AND_PREP_COPY_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+        raw_text = source.raw_text or ""
+
+        self.assertEqual(item_names, ["Crispy Chicken Sandwich"])
+        self.assertNotIn("Sauced, fried or grilled", raw_text)
+        self.assertNotIn("3 for Me", raw_text)
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(

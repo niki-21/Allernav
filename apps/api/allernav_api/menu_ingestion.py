@@ -105,6 +105,34 @@ NON_DISH_SECTION_WORDS = {
     "visit",
 }
 
+PROMO_OR_DEAL_WORDS = {
+    "combo",
+    "deal",
+    "deals",
+    "value",
+    "meal",
+    "meals",
+    "bundle",
+    "bundles",
+    "special",
+    "specials",
+    "starting",
+    "starts",
+}
+
+PREPARATION_ONLY_WORDS = {
+    "sauced",
+    "fried",
+    "grilled",
+    "roasted",
+    "steamed",
+    "crispy",
+    "baked",
+    "spicy",
+    "mild",
+    "hot",
+}
+
 def default_db_path() -> Path:
     configured = os.getenv("ALLERNAV_MENU_DB")
     if configured:
@@ -540,6 +568,10 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_non_dish_marketing_text(name, description):
         return False
+    if looks_like_meal_deal_or_promo(name, description):
+        return False
+    if looks_like_preparation_phrase_without_dish(name, description):
+        return False
     if len([term for term in terms if term]) <= 1 and not description:
         return False
     return menu_item_quality_score(name, description) >= 4
@@ -599,6 +631,41 @@ def looks_like_non_dish_marketing_text(name: str, description: str | None = None
     return False
 
 
+def looks_like_meal_deal_or_promo(name: str, description: str | None = None) -> bool:
+    normalized_name = name.lower()
+    text = f"{name} {description or ''}".lower()
+    tokens = set(re.split(r"[^a-z0-9]+", text))
+    has_price = bool(re.search(r"\$\d|\b\d{1,3}\.\d{2}\b", text))
+    has_food_noun = has_menu_item_noun(text)
+
+    if re.fullmatch(r"\d+\s+(for|fo)\s+\w+", normalized_name):
+        return True
+    if re.search(r"\b\d+\s+for\s+\w+\b", normalized_name) and not has_food_noun:
+        return True
+    if any(word in tokens for word in PROMO_OR_DEAL_WORDS) and re.search(
+        r"\b(pick|choose|select|get|starting at|best value|beverage|starter|main)\b",
+        text,
+    ):
+        return True
+    if has_price and re.search(r"\b(starting at|value meal|pick your|beverage,?\s+starter|main)\b", text) and not has_food_noun:
+        return True
+    return False
+
+
+def looks_like_preparation_phrase_without_dish(name: str, description: str | None = None) -> bool:
+    normalized_name = name.lower()
+    text = f"{name} {description or ''}".lower()
+    tokens = [term for term in re.split(r"[^a-z0-9]+", normalized_name) if term]
+    if not tokens:
+        return False
+    prep_token_count = sum(1 for token in tokens if token in PREPARATION_ONLY_WORDS or token in {"or", "and"})
+    if prep_token_count >= len(tokens) - 1 and not has_menu_item_noun(text):
+        return True
+    if re.fullmatch(r"(sauced|fried|grilled|roasted|steamed|crispy)(,\s*|\s+or\s+|\s+and\s+).+", normalized_name):
+        return not has_menu_item_noun(text)
+    return False
+
+
 def is_beverage_only(name: str, description: str | None = None) -> bool:
     text = f"{name} {description or ''}".lower()
     tokens = set(re.split(r"[^a-z0-9]+", text))
@@ -636,6 +703,21 @@ def looks_like_food_text(text: str) -> bool:
             r"sesame|peanut|soy|bread|flour|vegetable|tomato|greens|beans|soup|"
             r"cake|dessert|cookie|fries|fried|grilled|roasted|steamed|spicy|"
             r"dumpling|curry|kebab|falafel|hummus|gyro|steak|rib|wings|sausage"
+            r")\b",
+            text,
+        )
+    )
+
+
+def has_menu_item_noun(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"bowl|noodle|noodles|pasta|sandwich|salad|roll|taco|burger|pizza|"
+            r"chicken|beef|pork|fish|salmon|tuna|shrimp|crab|tofu|egg|eggs|cheese|"
+            r"vegetable|tomato|greens|beans|soup|cake|dessert|cookie|cookies|fries|"
+            r"dumpling|curry|kebab|falafel|hummus|gyro|steak|rib|ribs|wings|sausage|"
+            r"burrito|quesadilla|nachos|toast|omelet|omelette|pancake|waffle|rice"
             r")\b",
             text,
         )
