@@ -147,6 +147,22 @@ MENU_PATH_CANDIDATES = (
     "/assets/menu.pdf",
 )
 
+SITEMAP_PATH_CANDIDATES = (
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+)
+
+MENU_DISCOVERY_HUB_WORDS = (
+    "menu",
+    "menus",
+    "food",
+    "dining",
+    "eat",
+    "order",
+    "online-ordering",
+    "locations",
+)
+
 THIRD_PARTY_MENU_HOSTS = (
     "toasttab.com",
     "popmenu.com",
@@ -379,15 +395,41 @@ def discover_candidate_urls(website_url: str, fetch_html: FetchHtml | None = Non
 
     candidates = [normalized]
     fetcher = fetch_html or fetch_html_url
-    homepage = fetcher(normalized)
+    fetched_pages: dict[str, str | None] = {}
+
+    def fetch_once(url: str) -> str | None:
+        if url not in fetched_pages:
+            fetched_pages[url] = fetcher(url)
+        return fetched_pages[url]
+
+    homepage = fetch_once(normalized)
     if homepage:
         for url in sorted(extract_candidate_menu_urls(homepage, normalized), key=candidate_url_priority):
             if url not in candidates:
                 candidates.append(url)
+
+    for sitemap_url in sitemap_url_candidates(normalized):
+        sitemap = fetch_once(sitemap_url)
+        if not sitemap:
+            continue
+        for url in sorted(extract_sitemap_menu_urls(sitemap, normalized), key=candidate_url_priority):
+            if url not in candidates:
+                candidates.append(url)
+
     for url in common_menu_url_candidates(normalized):
         if url not in candidates:
             candidates.append(url)
-    return candidates[:10]
+
+    if homepage:
+        for hub_url in sorted(extract_menu_discovery_hub_urls(homepage, normalized), key=candidate_url_priority)[:4]:
+            hub_page = fetch_once(hub_url)
+            if not hub_page:
+                continue
+            for url in sorted(extract_candidate_menu_urls(hub_page, hub_url), key=candidate_url_priority):
+                if url not in candidates:
+                    candidates.append(url)
+
+    return candidates[:16]
 
 
 def fetch_html_url(url: str) -> str | None:
@@ -514,10 +556,53 @@ def extract_candidate_menu_urls(html_text: str, base_url: str) -> list[str]:
     return urls
 
 
+def extract_menu_discovery_hub_urls(html_text: str, base_url: str) -> list[str]:
+    urls: list[str] = []
+    for href, label in re.findall(r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</a>", html_text, flags=re.IGNORECASE):
+        absolute = absolute_url(href, base_url)
+        if not absolute or looks_like_document_url(absolute):
+            continue
+        text = html_to_text(label).lower()
+        parsed = parse.urlparse(absolute)
+        signal_text = f"{parsed.path.lower()} {text} {parsed.netloc.lower()}"
+        if not any(word in signal_text for word in MENU_DISCOVERY_HUB_WORDS):
+            continue
+        if absolute not in urls:
+            urls.append(absolute)
+    return urls
+
+
+def extract_sitemap_menu_urls(xml_text: str, base_url: str) -> list[str]:
+    urls: list[str] = []
+    loc_values = re.findall(r"<loc>\s*([^<]+)\s*</loc>", xml_text, flags=re.IGNORECASE)
+    for loc in loc_values:
+        cleaned = html.unescape(loc).strip()
+        absolute = absolute_url(cleaned, base_url)
+        if not absolute:
+            continue
+        parsed = parse.urlparse(absolute)
+        signal_text = f"{parsed.path.lower()} {parsed.netloc.lower()}"
+        if (
+            not re.search(r"menu|menus|food|dinner|lunch|brunch|order|toast|popmenu|singleplatform|chownow", signal_text)
+            and not looks_like_document_url(absolute)
+            and not is_known_menu_provider_url(absolute)
+        ):
+            continue
+        if absolute not in urls:
+            urls.append(absolute)
+    return urls
+
+
 def common_menu_url_candidates(base_url: str) -> list[str]:
     parsed = parse.urlparse(base_url)
     root = parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
     return [parse.urljoin(root, path) for path in MENU_PATH_CANDIDATES]
+
+
+def sitemap_url_candidates(base_url: str) -> list[str]:
+    parsed = parse.urlparse(base_url)
+    root = parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+    return [parse.urljoin(root, path) for path in SITEMAP_PATH_CANDIDATES]
 
 
 def candidate_url_priority(url: str) -> tuple[int, str]:

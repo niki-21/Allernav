@@ -244,6 +244,34 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertIn("https://restaurant.example/food-menu", candidates)
         self.assertIn("https://restaurant.example/menu.pdf", candidates)
 
+    def test_discovers_menu_from_sitemap_when_homepage_has_no_menu_link(self) -> None:
+        pages = {
+            "https://restaurant.example/": "<html>No menu links here</html>",
+            "https://restaurant.example/sitemap.xml": """
+              <urlset>
+                <url><loc>https://restaurant.example/about</loc></url>
+                <url><loc>https://restaurant.example/dinner-menu</loc></url>
+                <url><loc>https://restaurant.example/files/menu.pdf</loc></url>
+              </urlset>
+            """,
+        }
+
+        candidates = discover_candidate_urls("https://restaurant.example/", fetch_html=lambda url: pages.get(url))
+
+        self.assertIn("https://restaurant.example/dinner-menu", candidates)
+        self.assertIn("https://restaurant.example/files/menu.pdf", candidates)
+
+    def test_discovers_menu_from_one_hop_order_or_food_page(self) -> None:
+        pages = {
+            "https://restaurant.example/": '<a href="/food">Food</a>',
+            "https://restaurant.example/food": '<a href="/menus/current.pdf">Current menu PDF</a>',
+        }
+
+        candidates = discover_candidate_urls("https://restaurant.example/", fetch_html=lambda url: pages.get(url))
+
+        self.assertIn("https://restaurant.example/food", candidates)
+        self.assertIn("https://restaurant.example/menus/current.pdf", candidates)
+
     def test_prioritizes_pdf_and_provider_menu_links_from_homepage(self) -> None:
         links = extract_candidate_menu_urls(
             """
