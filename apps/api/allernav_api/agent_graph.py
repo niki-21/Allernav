@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+try:
+    from langsmith import traceable
+except ImportError:  # pragma: no cover - keeps local installs usable before optional tracing deps are installed
+    def traceable(*args: Any, **_kwargs: Any) -> Any:
+        if args and callable(args[0]):
+            return args[0]
+
+        def decorator(func: Any) -> Any:
+            return func
+
+        return decorator
+
 from .fixtures import get_fixture_context
 from .menu_ingestion import ingest_menu_from_website, load_menu_source
 from .models import (
@@ -33,6 +45,7 @@ GRAPH_NODES = [
 ]
 
 
+@traceable(name="AllerNav Dining Safety Graph", run_type="chain")
 def run_dining_safety_graph(
     *,
     profile: AllergyProfile,
@@ -53,7 +66,20 @@ def run_dining_safety_graph(
     except ImportError:
         final_state = run_sequential_graph(initial_state)
     else:
-        final_state = graph.invoke(initial_state)
+        final_state = graph.invoke(
+            initial_state,
+            config={
+                "run_name": "AllerNav LangGraph",
+                "tags": ["allernav", "dining-safety", "langgraph"],
+                "metadata": {
+                    "restaurant_id": restaurant_id,
+                    "restaurant_name": restaurant_name,
+                    "allergens": [allergen.value for allergen in profile.allergens],
+                    "has_context": context is not None,
+                    "menu_source_count": len(context.menu_sources) if context else 0,
+                },
+            },
+        )
 
     return final_state["result"]
 

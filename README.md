@@ -64,6 +64,9 @@ Vercel environment variables:
 - `GOOGLE_PLACES_API_KEY`
 - `GEMINI_API_KEY` (optional; enables Gemini-written menu recommendations)
 - `GEMINI_MODEL` (defaults to `gemini-3.5-flash`)
+- `LANGSMITH_TRACING` (optional; set to `true` to trace the FastAPI/LangGraph backend)
+- `LANGSMITH_API_KEY` (optional; LangSmith key, not an OpenAI key)
+- `LANGSMITH_PROJECT` (defaults to `allernav` when set)
 - `APIFY_TOKEN` (optional; enables expanded Google review retrieval)
 - `APIFY_REVIEWS_ACTOR` (defaults to `kaix~google-maps-reviews-scraper`)
 - `APIFY_REVIEWS_LIMIT` (defaults to `100`)
@@ -195,6 +198,32 @@ AZURE_SEARCH_INDEX_NAME=allernav-menu-evidence
 ```
 
 The deterministic allergen engine remains the safety authority. Hybrid/vector retrieval can surface evidence, but it does not decide that a dish is lower risk.
+
+## LangSmith Tracing
+
+LangSmith is the observability layer for LangChain/LangGraph applications. In AllerNav, it traces the FastAPI agent backend in `apps/api/allernav_api/agent_graph.py`.
+
+You do not need an OpenAI API key for the current backend trace. The current LangGraph path uses deterministic retrieval, ingestion, scoring, evidence selection, and safety gating. You only need `OPENAI_API_KEY` later if you add an OpenAI model call to a traced step.
+
+Set these in `apps/api/.env` for local FastAPI and in the deployed API environment if FastAPI is deployed separately:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your_langsmith_key
+LANGSMITH_PROJECT=allernav
+LANGCHAIN_CALLBACKS_BACKGROUND=false
+```
+
+When enabled, LangSmith will show:
+
+- the top-level `AllerNav Dining Safety Graph` run
+- the compiled `AllerNav LangGraph` run
+- LangGraph node timing and ordering
+- metadata such as restaurant ID, restaurant name, selected allergens, and menu source count
+- whether the trace ended in verification, avoidance, staff questions, or insufficient evidence
+
+Do not put secrets, private user profiles, or raw sensitive health details into trace metadata. Allergy selections are currently included because this is a demo decision-support project; remove that metadata before handling real user accounts.
 
 Expanded Google review retrieval is optional through Apify. Set these in `apps/api/.env` for FastAPI and in the Vercel web project environment if the Next.js API route is serving place details directly:
 
