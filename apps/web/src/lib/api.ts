@@ -111,6 +111,7 @@ export async function analyzeRestaurant(
   placeId: string,
   placeName: string,
   allergens: AllergyTag[],
+  websiteUrl?: string | null,
 ): Promise<AgentRecommendationResult> {
   const response = await fetch(`${API_PREFIX}/analyze-restaurant`, {
     method: "POST",
@@ -120,6 +121,7 @@ export async function analyzeRestaurant(
     body: JSON.stringify({
       restaurant_id: placeId,
       restaurant_name: placeName,
+      website_url: websiteUrl ?? null,
       profile: {
         allergens,
         sensitivity: "careful",
