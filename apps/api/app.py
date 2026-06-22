@@ -96,6 +96,7 @@ def health() -> dict[str, object]:
     gemini = bool(os.getenv("GEMINI_API_KEY"))
     supabase = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
     apify = bool(os.getenv("APIFY_TOKEN"))
+    langsmith = os.getenv("LANGSMITH_TRACING", "").lower() == "true" and bool(os.getenv("LANGSMITH_API_KEY"))
     return {
         "ok": google_server,
         "service": "AllerNav API",
@@ -105,6 +106,7 @@ def health() -> dict[str, object]:
             "gemini": gemini,
             "supabase": supabase,
             "apify_reviews": apify,
+            "langsmith": langsmith,
         },
     }
 
