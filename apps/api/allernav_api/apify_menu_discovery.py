@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -13,10 +14,26 @@ Requester = Callable[[str, dict[str, str], dict[str, Any], dict[str, str], float
 DEFAULT_APIFY_BASE_URL = "https://api.apify.com/v2"
 DEFAULT_APIFY_MENU_DISCOVERY_ACTOR = "apify~playwright-scraper"
 
-MENU_DISCOVERY_PAGE_FUNCTION = r"""
+
+@dataclass(frozen=True)
+class RenderedMenuPage:
+    url: str
+    title: str | None
+    visible_text: str
+
+
+@dataclass(frozen=True)
+class RenderedMenuDiscovery:
+    urls: list[str]
+    pages: list[RenderedMenuPage]
+
+
+def menu_discovery_page_function() -> str:
+    wait_ms = rendered_wait_ms()
+    return r"""
 async function pageFunction(context) {
     const { page, request } = context;
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(__WAIT_MS__);
 
     const links = await page.$$eval('a[href]', (anchors) => anchors.map((anchor) => {
         const href = anchor.href;
@@ -36,7 +53,7 @@ async function pageFunction(context) {
         visibleText: visibleText.slice(0, 12000),
     };
 }
-"""
+""".replace("__WAIT_MS__", str(wait_ms))
 
 
 class ApifyMenuDiscoveryError(Exception):
@@ -50,11 +67,19 @@ def apify_menu_discovery_configured() -> bool:
 
 
 def request_timeout_seconds() -> float:
-    raw = os.getenv("APIFY_MENU_DISCOVERY_TIMEOUT_SECONDS", os.getenv("APIFY_TIMEOUT_SECONDS", "18"))
+    raw = os.getenv("APIFY_MENU_DISCOVERY_TIMEOUT_SECONDS", os.getenv("APIFY_TIMEOUT_SECONDS", "45"))
     try:
-        return float(min(30, max(3, float(raw))))
+        return float(min(90, max(3, float(raw))))
     except ValueError:
-        return 18.0
+        return 45.0
+
+
+def rendered_wait_ms() -> int:
+    raw = os.getenv("APIFY_MENU_DISCOVERY_WAIT_MS", "2500")
+    try:
+        return max(500, min(10_000, int(raw)))
+    except ValueError:
+        return 2500
 
 
 def max_pages_per_crawl() -> int:
@@ -83,9 +108,17 @@ def discover_rendered_menu_urls(
     *,
     requester: Requester | None = None,
 ) -> list[str]:
+    return discover_rendered_menu_evidence(website_url, requester=requester).urls
+
+
+def discover_rendered_menu_evidence(
+    website_url: str,
+    *,
+    requester: Requester | None = None,
+) -> RenderedMenuDiscovery:
     token = os.getenv("APIFY_TOKEN", "").strip()
     if not token or os.getenv("APIFY_MENU_DISCOVERY_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
-        return []
+        return RenderedMenuDiscovery(urls=[], pages=[])
 
     base_url = os.getenv("APIFY_API_BASE_URL", DEFAULT_APIFY_BASE_URL).strip() or DEFAULT_APIFY_BASE_URL
     actor = os.getenv("APIFY_MENU_DISCOVERY_ACTOR", DEFAULT_APIFY_MENU_DISCOVERY_ACTOR).strip()
@@ -104,7 +137,7 @@ def discover_rendered_menu_urls(
     except (httpx.HTTPError, ValueError) as exc:
         raise ApifyMenuDiscoveryError(str(exc)) from exc
 
-    return parse_rendered_menu_urls(payload)
+    return parse_rendered_menu_discovery(payload)
 
 
 def build_apify_menu_discovery_input(website_url: str) -> dict[str, Any]:
@@ -112,25 +145,33 @@ def build_apify_menu_discovery_input(website_url: str) -> dict[str, Any]:
         "startUrls": [{"url": website_url}],
         "linkSelector": "a[href]",
         "maxRequestsPerCrawl": max_pages_per_crawl(),
-        "maxRequestRetries": 1,
-        "pageLoadTimeoutSecs": 20,
-        "pageFunctionTimeoutSecs": 20,
-        "waitUntil": "networkidle",
+        "maxRequestRetries": 0,
+        "pageLoadTimeoutSecs": 30,
+        "pageFunctionTimeoutSecs": 30,
+        "waitUntil": "domcontentloaded",
         "downloadMedia": False,
         "downloadCss": True,
         "headless": True,
         "proxyConfiguration": {"useApifyProxy": True},
-        "pageFunction": MENU_DISCOVERY_PAGE_FUNCTION,
+        "pageFunction": menu_discovery_page_function(),
     }
 
 
 def parse_rendered_menu_urls(payload: Any) -> list[str]:
+    return parse_rendered_menu_discovery(payload).urls
+
+
+def parse_rendered_menu_discovery(payload: Any) -> RenderedMenuDiscovery:
     urls: list[str] = []
+    pages: list[RenderedMenuPage] = []
     for item in flatten_items(payload):
         for candidate in extract_urls_from_item(item):
             if candidate not in urls and looks_like_menu_candidate(candidate):
                 urls.append(candidate)
-    return urls[:20]
+        page = extract_rendered_page(item)
+        if page:
+            pages.append(page)
+    return RenderedMenuDiscovery(urls=urls[:20], pages=pages[:5])
 
 
 def flatten_items(payload: Any) -> list[dict[str, Any]]:
@@ -171,6 +212,46 @@ def extract_urls_from_item(item: dict[str, Any]) -> list[str]:
                 if isinstance(href, str):
                     urls.append(href)
     return urls
+
+
+def extract_rendered_page(item: dict[str, Any]) -> RenderedMenuPage | None:
+    url = item.get("url")
+    visible_text = item.get("visibleText") or item.get("visible_text") or item.get("text")
+    title = item.get("title")
+    if not isinstance(url, str) or not isinstance(visible_text, str):
+        return None
+    cleaned = visible_text.strip()
+    if len(cleaned) < 40:
+        return None
+    if not looks_like_rendered_menu_text(cleaned):
+        return None
+    return RenderedMenuPage(
+        url=url,
+        title=title if isinstance(title, str) else None,
+        visible_text=cleaned,
+    )
+
+
+def looks_like_rendered_menu_text(text: str) -> bool:
+    normalized = text.lower()
+    has_menu_word = any(word in normalized for word in ("menu", "dinner", "lunch", "brunch", "appetizer", "entree"))
+    has_food_word = any(
+        word in normalized
+        for word in (
+            "chicken",
+            "shrimp",
+            "salad",
+            "pasta",
+            "sandwich",
+            "burger",
+            "rice",
+            "sauce",
+            "cheese",
+            "taco",
+            "roll",
+        )
+    )
+    return has_menu_word and (has_food_word or "$" in normalized)
 
 
 def looks_like_menu_candidate(url: str) -> bool:

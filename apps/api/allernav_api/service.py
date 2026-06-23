@@ -217,13 +217,20 @@ async def create_menu_refresh_job(
     message = (
         f"Captured {item_count} menu item{'s' if item_count != 1 else ''} from {source.source_url}."
         if item_count
-        else "No reliable dish-level menu items were extracted from the restaurant website or linked documents."
+        else (
+            "No reliable dish-level menu items were extracted. "
+            f"Last checked source: {source.source_url or resolved_url}."
+        )
     )
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
         status=status,
         message=message,
+        item_count=item_count,
+        source_url=source.source_url,
+        content_type=source.content_type,
+        extraction_method=source.extraction_method,
         created_at=now,
         completed_at=datetime.now(UTC).isoformat(),
     )

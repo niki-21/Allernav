@@ -5,7 +5,9 @@ import unittest
 
 from allernav_api.apify_menu_discovery import (
     build_apify_menu_discovery_input,
+    discover_rendered_menu_evidence,
     discover_rendered_menu_urls,
+    parse_rendered_menu_discovery,
     parse_rendered_menu_urls,
 )
 
@@ -22,6 +24,8 @@ APIFY_RENDERED_PAYLOAD = [
             "https://www.toasttab.com/example-restaurant/v3",
             "https://analytics.example/frame",
         ],
+        "title": "Restaurant Menu",
+        "visibleText": "Dinner Menu\nChicken Bowl - rice, chicken, tomato sauce\nShrimp Salad - greens, shrimp, lemon",
     }
 ]
 
@@ -53,6 +57,13 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertNotIn("https://restaurant.example/about", urls)
         self.assertNotIn("https://analytics.example/frame", urls)
 
+    def test_parses_rendered_menu_text_pages(self) -> None:
+        discovery = parse_rendered_menu_discovery(APIFY_RENDERED_PAYLOAD)
+
+        self.assertEqual(len(discovery.pages), 1)
+        self.assertEqual(discovery.pages[0].url, "https://restaurant.example/")
+        self.assertIn("Chicken Bowl", discovery.pages[0].visible_text)
+
     def test_fetches_rendered_candidates_with_expected_actor_endpoint(self) -> None:
         calls = []
 
@@ -60,8 +71,10 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
             calls.append((url, params, body, headers, timeout))
             return APIFY_RENDERED_PAYLOAD
 
+        discovery = discover_rendered_menu_evidence("https://restaurant.example/", requester=fake_requester)
         urls = discover_rendered_menu_urls("https://restaurant.example/", requester=fake_requester)
 
+        self.assertEqual(len(discovery.pages), 1)
         self.assertIn("https://restaurant.example/menu", urls)
         self.assertRegex(calls[0][0], r"/actors/apify~playwright-scraper/run-sync-get-dataset-items$")
         self.assertEqual(calls[0][1]["token"], "test-token")

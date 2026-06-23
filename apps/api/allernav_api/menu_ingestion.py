@@ -12,7 +12,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from . import supabase_store
-from .apify_menu_discovery import ApifyMenuDiscoveryError, discover_rendered_menu_urls
+from .apify_menu_discovery import ApifyMenuDiscoveryError, RenderedMenuDiscovery, discover_rendered_menu_evidence
 from .document_intelligence import (
     DocumentExtraction,
     document_content_type,
@@ -358,12 +358,26 @@ def ingest_menu_from_website(
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
+    rendered_discovery = discover_rendered_menu_evidence_safely(website_url) if fetch_html is None else RenderedMenuDiscovery(urls=[], pages=[])
     candidate_urls = discover_candidate_urls(
         website_url,
         fetcher,
         allow_rendered_discovery=fetch_html is None,
+        rendered_urls=rendered_discovery.urls,
     )
     last_source: MenuSource | None = None
+
+    for rendered_page in rendered_discovery.pages:
+        source = parse_rendered_menu_text(rendered_page.visible_text, rendered_page.url)
+        last_source = source
+        if source.sections:
+            save_menu_source(
+                restaurant_id=restaurant_id,
+                restaurant_name=restaurant_name,
+                source=source,
+                db_path=db_path,
+            )
+            return source
 
     for candidate_url in candidate_urls:
         if looks_like_document_url(candidate_url):
@@ -417,6 +431,7 @@ def discover_candidate_urls(
     fetch_html: FetchHtml | None = None,
     *,
     allow_rendered_discovery: bool | None = None,
+    rendered_urls: list[str] | None = None,
 ) -> list[str]:
     normalized = normalize_url(website_url)
     if not normalized:
@@ -439,11 +454,10 @@ def discover_candidate_urls(
                 candidates.append(url)
 
     if use_rendered_discovery:
-        try:
-            rendered_urls = discover_rendered_menu_urls(normalized)
-        except ApifyMenuDiscoveryError:
-            rendered_urls = []
-        for url in sorted(rendered_urls, key=candidate_url_priority):
+        urls = rendered_urls
+        if urls is None:
+            urls = discover_rendered_menu_evidence_safely(normalized).urls
+        for url in sorted(urls, key=candidate_url_priority):
             if url not in candidates:
                 candidates.append(url)
 
@@ -469,6 +483,13 @@ def discover_candidate_urls(
                     candidates.append(url)
 
     return candidates[:16]
+
+
+def discover_rendered_menu_evidence_safely(website_url: str) -> RenderedMenuDiscovery:
+    try:
+        return discover_rendered_menu_evidence(website_url)
+    except ApifyMenuDiscoveryError:
+        return RenderedMenuDiscovery(urls=[], pages=[])
 
 
 def fetch_html_url(url: str) -> str | None:
@@ -534,6 +555,20 @@ def parse_menu_document(document_url: str, extract_document: ExtractDocument | N
         extraction_method=extraction.extraction_method,
         page_count=extraction.page_count,
         extraction_confidence=extraction.confidence,
+    )
+
+
+def parse_rendered_menu_text(text: str, source_url: str) -> MenuSource:
+    timestamp = datetime.now(UTC).isoformat()
+    sections = sanitize_sections(parse_raw_menu_text("\n".join(line for line in text.splitlines() if not is_prompt_injection(line))))
+    return MenuSource(
+        source_type=SourceType.RESTAURANT_WEBSITE,
+        source_url=source_url,
+        source_timestamp=timestamp,
+        reliability=0.58 if sections else 0.25,
+        raw_text=summarize_menu_text(sections) or None,
+        sections=sections,
+        extraction_method="apify_rendered_text",
     )
 
 

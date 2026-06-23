@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from allernav_api.agent_graph import run_dining_safety_graph
+from allernav_api.apify_menu_discovery import RenderedMenuDiscovery, RenderedMenuPage
 from allernav_api.document_intelligence import DocumentExtraction
 from allernav_api.menu_ingestion import (
     discover_candidate_urls,
@@ -298,8 +299,8 @@ class MenuIngestionTests(unittest.TestCase):
 
     def test_includes_rendered_menu_candidates_when_enabled(self) -> None:
         with patch(
-            "allernav_api.menu_ingestion.discover_rendered_menu_urls",
-            return_value=["https://restaurant.example/rendered-menu"],
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=RenderedMenuDiscovery(urls=["https://restaurant.example/rendered-menu"], pages=[]),
         ):
             candidates = discover_candidate_urls(
                 "https://restaurant.example/",
@@ -310,6 +311,36 @@ class MenuIngestionTests(unittest.TestCase):
             )
 
         self.assertIn("https://restaurant.example/rendered-menu", candidates)
+
+    def test_ingests_rendered_menu_text_before_static_fallback(self) -> None:
+        with patch("allernav_api.menu_ingestion.fetch_html_url", return_value="<html>No static menu</html>"), patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=RenderedMenuDiscovery(
+                urls=[],
+                pages=[
+                    RenderedMenuPage(
+                        url="https://restaurant.example/",
+                        title="Menu",
+                        visible_text=(
+                            "Dinner Menu\n"
+                            "Chicken Bowl - rice, chicken, tomato sauce\n"
+                            "Shrimp Salad - greens, shrimp, lemon"
+                        ),
+                    )
+                ],
+            ),
+        ):
+            source = ingest_menu_from_website(
+                restaurant_id="rendered",
+                restaurant_name="Rendered",
+                website_url="https://restaurant.example/",
+                fetch_html=None,
+                db_path=self.db_path,
+            )
+
+        item_names = [item.name for section in source.sections for item in section.items]
+        self.assertEqual(source.extraction_method, "apify_rendered_text")
+        self.assertIn("Chicken Bowl", item_names)
 
     def test_prioritizes_pdf_and_provider_menu_links_from_homepage(self) -> None:
         links = extract_candidate_menu_urls(
