@@ -12,6 +12,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from . import supabase_store
+from .apify_menu_discovery import ApifyMenuDiscoveryError, discover_rendered_menu_urls
 from .document_intelligence import (
     DocumentExtraction,
     document_content_type,
@@ -131,6 +132,25 @@ PREPARATION_ONLY_WORDS = {
     "spicy",
     "mild",
     "hot",
+}
+
+ADD_ON_ONLY_WORDS = {
+    "add",
+    "adds",
+    "addon",
+    "addons",
+    "add-on",
+    "add-ons",
+    "addition",
+    "additions",
+    "extra",
+    "extras",
+    "protein",
+    "proteins",
+    "modifier",
+    "modifiers",
+    "substitute",
+    "substitutions",
 }
 
 MENU_PATH_CANDIDATES = (
@@ -338,7 +358,11 @@ def ingest_menu_from_website(
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
-    candidate_urls = discover_candidate_urls(website_url, fetcher)
+    candidate_urls = discover_candidate_urls(
+        website_url,
+        fetcher,
+        allow_rendered_discovery=fetch_html is None,
+    )
     last_source: MenuSource | None = None
 
     for candidate_url in candidate_urls:
@@ -388,13 +412,19 @@ def ingest_menu_from_website(
     return failed_source
 
 
-def discover_candidate_urls(website_url: str, fetch_html: FetchHtml | None = None) -> list[str]:
+def discover_candidate_urls(
+    website_url: str,
+    fetch_html: FetchHtml | None = None,
+    *,
+    allow_rendered_discovery: bool | None = None,
+) -> list[str]:
     normalized = normalize_url(website_url)
     if not normalized:
         return []
 
     candidates = [normalized]
     fetcher = fetch_html or fetch_html_url
+    use_rendered_discovery = fetch_html is None if allow_rendered_discovery is None else allow_rendered_discovery
     fetched_pages: dict[str, str | None] = {}
 
     def fetch_once(url: str) -> str | None:
@@ -405,6 +435,15 @@ def discover_candidate_urls(website_url: str, fetch_html: FetchHtml | None = Non
     homepage = fetch_once(normalized)
     if homepage:
         for url in sorted(extract_candidate_menu_urls(homepage, normalized), key=candidate_url_priority):
+            if url not in candidates:
+                candidates.append(url)
+
+    if use_rendered_discovery:
+        try:
+            rendered_urls = discover_rendered_menu_urls(normalized)
+        except ApifyMenuDiscoveryError:
+            rendered_urls = []
+        for url in sorted(rendered_urls, key=candidate_url_priority):
             if url not in candidates:
                 candidates.append(url)
 
@@ -720,6 +759,8 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_meal_deal_or_promo(name, description):
         return False
+    if looks_like_add_on_modifier_row(name, description):
+        return False
     if looks_like_preparation_phrase_without_dish(name, description):
         return False
     if len([term for term in terms if term]) <= 1 and not description:
@@ -798,6 +839,26 @@ def looks_like_meal_deal_or_promo(name: str, description: str | None = None) -> 
     ):
         return True
     if has_price and re.search(r"\b(starting at|value meal|pick your|beverage,?\s+starter|main)\b", text) and not has_food_noun:
+        return True
+    return False
+
+
+def looks_like_add_on_modifier_row(name: str, description: str | None = None) -> bool:
+    normalized_name = name.lower().strip()
+    text = f"{name} {description or ''}".lower()
+    name_tokens = [term for term in re.split(r"[^a-z0-9-]+", normalized_name) if term]
+    text_tokens = set(re.split(r"[^a-z0-9-]+", text))
+
+    if normalized_name in ADD_ON_ONLY_WORDS:
+        return True
+    if len(name_tokens) <= 2 and any(token in ADD_ON_ONLY_WORDS for token in name_tokens):
+        return True
+    if re.fullmatch(r"(add|extra|substitute|protein)s?(\s+(on|ons|in|with|for))?", normalized_name):
+        return True
+    if any(token in ADD_ON_ONLY_WORDS for token in text_tokens) and re.search(
+        r"\b(chicken|shrimp|steak|salmon|tofu|egg|avocado|cheese|bacon)\s+\d{1,2}\b",
+        text,
+    ):
         return True
     return False
 

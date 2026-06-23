@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from allernav_api.agent_graph import run_dining_safety_graph
 from allernav_api.document_intelligence import DocumentExtraction
@@ -128,6 +129,21 @@ PROMO_AND_PREP_COPY_HTML = """
 </html>
 """
 
+ADD_ON_MODIFIER_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>add</h3>
+      <p>chicken 10 / shrimp 14 / hanger steak 16</p>
+    </article>
+    <article class="menu-item">
+      <h3>Steak Frites</h3>
+      <p>Hanger steak, fries, herb butter, and greens.</p>
+    </article>
+  </section>
+</html>
+"""
+
 
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -186,6 +202,14 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(item_names, ["Crispy Chicken Sandwich"])
         self.assertNotIn("Sauced, fried or grilled", raw_text)
         self.assertNotIn("3 for Me", raw_text)
+
+    def test_rejects_add_on_modifier_rows_before_storage(self) -> None:
+        source = parse_menu_html(ADD_ON_MODIFIER_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+        raw_text = source.raw_text or ""
+
+        self.assertEqual(item_names, ["Steak Frites"])
+        self.assertNotIn("chicken 10 / shrimp 14 / hanger steak 16", raw_text)
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(
@@ -271,6 +295,21 @@ class MenuIngestionTests(unittest.TestCase):
 
         self.assertIn("https://restaurant.example/food", candidates)
         self.assertIn("https://restaurant.example/menus/current.pdf", candidates)
+
+    def test_includes_rendered_menu_candidates_when_enabled(self) -> None:
+        with patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_urls",
+            return_value=["https://restaurant.example/rendered-menu"],
+        ):
+            candidates = discover_candidate_urls(
+                "https://restaurant.example/",
+                fetch_html=lambda url: "<html>No static menu links</html>"
+                if url == "https://restaurant.example/"
+                else None,
+                allow_rendered_discovery=True,
+            )
+
+        self.assertIn("https://restaurant.example/rendered-menu", candidates)
 
     def test_prioritizes_pdf_and_provider_menu_links_from_homepage(self) -> None:
         links = extract_candidate_menu_urls(
