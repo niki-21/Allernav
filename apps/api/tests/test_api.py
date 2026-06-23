@@ -7,10 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from allernav_api.models import AllergyTag, LatLng, PlaceReviewSnippet, SearchRequest
+from allernav_api.models import AllergyTag, LatLng, NearbySuggestionRequest, PlaceReviewSnippet, SearchRequest
 from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuItem, MenuSection, MenuSource, SourceType
 from allernav_api.agent_service import analyze_menu_service
 from allernav_api.menu_ingestion import save_menu_source
+from allernav_api.rag_service import restaurant_search_query, suggest_nearby_places_service
 from fastapi.testclient import TestClient
 from main import allowed_origins
 from app import app
@@ -198,6 +199,51 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(refresh.json()["status"], "complete")
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
+
+    def test_nearby_rag_suggestions_retrieve_stored_menu_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "menus.sqlite"
+            os.environ["ALLERNAV_MENU_DB"] = str(db_path)
+            os.environ.pop("GEMINI_API_KEY", None)
+            save_menu_source(
+                restaurant_id="alpha",
+                restaurant_name="Alpha Cafe",
+                source=MenuSource(
+                    source_type=SourceType.RESTAURANT_WEBSITE,
+                    source_url="https://example.com/menu",
+                    reliability=0.8,
+                    sections=[
+                        MenuSection(
+                            title="Bowls",
+                            items=[
+                                MenuItem(name="Tomato Rice Bowl", description="Rice, tomato, greens."),
+                                MenuItem(name="Peanut Noodles", description="Wheat noodles, peanut sauce."),
+                            ],
+                        )
+                    ],
+                ),
+                db_path=db_path,
+            )
+
+            response = asyncio.run(
+                suggest_nearby_places_service(
+                    NearbySuggestionRequest(
+                        question="Where should I start for peanut allergy?",
+                        allergens=[AllergyTag.PEANUT],
+                        candidate_place_ids=["alpha"],
+                    ),
+                    client=FakePlacesClient(),
+                )
+            )
+            os.environ.pop("ALLERNAV_MENU_DB", None)
+
+        self.assertEqual(response.places[0].place.id, "alpha")
+        self.assertGreaterEqual(len(response.evidence), 1)
+        self.assertIn("verification", response.answer.lower())
+
+    def test_nearby_rag_normalizes_broad_assistant_questions_to_restaurants(self) -> None:
+        self.assertEqual(restaurant_search_query("Suggest nearby places here"), "restaurants")
+        self.assertEqual(restaurant_search_query("Suggest sushi options nearby"), "sushi restaurants")
 
 
 if __name__ == "__main__":

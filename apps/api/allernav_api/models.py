@@ -324,6 +324,34 @@ class HybridSearchResponse(BaseModel):
     results: list[HybridSearchResult] = Field(default_factory=list)
 
 
+class NearbySuggestionRequest(BaseModel):
+    question: str = "Suggest nearby places to evaluate for my allergy profile."
+    query: str = "restaurants"
+    center: LatLng | None = None
+    allergens: list[AllergyTag] = Field(default_factory=list)
+    candidate_place_ids: list[str] = Field(default_factory=list)
+    max_places: int = Field(default=6, ge=1, le=10)
+    top_evidence: int = Field(default=3, ge=1, le=5)
+
+
+class NearbyPlaceSuggestion(BaseModel):
+    place: PlaceListItem
+    confidence: float = Field(ge=0, le=1)
+    menu_item_count: int = Field(default=0, ge=0)
+    matched_allergen_items: int = Field(default=0, ge=0)
+    evidence: list[HybridSearchResult] = Field(default_factory=list)
+    risk_note: str
+
+
+class NearbySuggestionResponse(BaseModel):
+    answer: str
+    retrieval_mode: str = "hybrid"
+    places: list[NearbyPlaceSuggestion] = Field(default_factory=list)
+    evidence: list[HybridSearchResult] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    recommended_questions: list[str] = Field(default_factory=list)
+
+
 class RecommendedMenuItem(BaseModel):
     name: str
     section_title: str | None = None

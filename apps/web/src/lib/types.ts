@@ -261,6 +261,40 @@ export interface SearchResponse {
   places: PlaceSummary[];
 }
 
+export interface HybridSearchResult {
+  id: string;
+  restaurant_id: string;
+  restaurant_name?: string | null;
+  dish_name?: string | null;
+  menu_section?: string | null;
+  source_type: AgentSourceType;
+  source_url?: string | null;
+  source_timestamp?: string | null;
+  confidence: number;
+  raw_text: string;
+  matched_allergens: AllergyTag[];
+  retrieval_mode: "keyword" | "hybrid" | "vector" | string;
+  can_support_low_risk: boolean;
+}
+
+export interface NearbyPlaceSuggestion {
+  place: PlaceSummary;
+  confidence: number;
+  menu_item_count: number;
+  matched_allergen_items: number;
+  evidence: HybridSearchResult[];
+  risk_note: string;
+}
+
+export interface NearbySuggestionResponse {
+  answer: string;
+  retrieval_mode: string;
+  places: NearbyPlaceSuggestion[];
+  evidence: HybridSearchResult[];
+  missing_information: string[];
+  recommended_questions: string[];
+}
+
 export type PlaceDetailState =
   | { status: "idle" }
   | { status: "loading" }

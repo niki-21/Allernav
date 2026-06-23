@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildMenuRefreshPayload, buildPlaceDetailsUrl, buildSearchPayload } from "../api.ts";
+import {
+  buildMenuRefreshPayload,
+  buildNearbySuggestionPayload,
+  buildPlaceDetailsUrl,
+  buildSearchPayload,
+} from "../api.ts";
 
 test("buildSearchPayload keeps query, center, and allergens aligned", () => {
   assert.deepEqual(
@@ -30,6 +35,26 @@ test("buildMenuRefreshPayload includes restaurant name and website url", () => {
     {
       restaurant_name: "Nami Nori Williamsburg",
       website_url: "https://example.com/menu",
+    },
+  );
+});
+
+test("buildNearbySuggestionPayload includes current map candidates", () => {
+  assert.deepEqual(
+    buildNearbySuggestionPayload(
+      "suggest dinner",
+      { lat: 40, lng: -73 },
+      ["sesame"],
+      ["place-a", "place-b"],
+    ),
+    {
+      question: "suggest dinner",
+      query: "suggest dinner",
+      center: { lat: 40, lng: -73 },
+      allergens: ["sesame"],
+      candidate_place_ids: ["place-a", "place-b"],
+      max_places: 2,
+      top_evidence: 3,
     },
   );
 });

@@ -108,6 +108,34 @@ class AzureSearchTests(unittest.TestCase):
         self.assertEqual(response.results[0].retrieval_mode, "vector")
         self.assertFalse(response.results[0].can_support_low_risk)
 
+    def test_local_semantic_result_is_retrieved_but_not_low_risk_proof(self) -> None:
+        save_menu_source(
+            restaurant_id="semantic-place",
+            restaurant_name="Semantic Place",
+            source=MenuSource(
+                source_type=SourceType.OFFICIAL_MENU,
+                source_url="https://example.com/menu",
+                reliability=0.8,
+                sections=[
+                    MenuSection(
+                        title="Mains",
+                        items=[MenuItem(name="Roasted Vegetable Rice Bowl", description="Rice, squash, herbs")],
+                    )
+                ],
+            ),
+            db_path=self.db_path,
+        )
+
+        response = hybrid_search_menu(
+            HybridSearchRequest(
+                query="suggest a lower risk dinner option",
+                restaurant_id="semantic-place",
+            )
+        )
+
+        self.assertEqual(response.results[0].retrieval_mode, "semantic")
+        self.assertFalse(response.results[0].can_support_low_risk)
+
     def test_stale_source_metadata_lowers_confidence(self) -> None:
         fresh = freshness_adjusted_confidence(datetime.now(UTC).isoformat(), 0.8)
         stale = freshness_adjusted_confidence("2024-01-01T00:00:00+00:00", 0.8)

@@ -841,6 +841,128 @@ textarea {
   color: var(--muted);
 }
 
+.nearby-rag-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(60, 64, 67, 0.12);
+  background: #fbfcfd;
+}
+
+.nearby-rag-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nearby-rag-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.nearby-rag-header span {
+  color: #126148;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nearby-rag-header strong {
+  color: #202124;
+  font-size: 0.98rem;
+}
+
+.nearby-rag-header small,
+.nearby-rag-answer small {
+  color: #5f6368;
+  font-size: 0.78rem;
+}
+
+.nearby-rag-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.nearby-rag-form textarea {
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid rgba(60, 64, 67, 0.16);
+  border-radius: 12px;
+  padding: 10px 11px;
+  background: #ffffff;
+  color: #202124;
+  line-height: 1.35;
+  outline: none;
+}
+
+.nearby-rag-form textarea:focus {
+  border-color: rgba(15, 123, 97, 0.48);
+  box-shadow: 0 0 0 3px rgba(15, 123, 97, 0.1);
+}
+
+.nearby-rag-form button {
+  align-self: stretch;
+  min-width: 64px;
+  border: 0;
+  border-radius: 12px;
+  background: #0f7b61;
+  color: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.nearby-rag-form button:disabled {
+  background: #d6dde3;
+  color: #687582;
+  cursor: not-allowed;
+}
+
+.nearby-rag-answer {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(15, 123, 97, 0.16);
+  border-radius: 14px;
+  background: #f4fbf8;
+}
+
+.nearby-rag-answer p {
+  margin: 0;
+  color: #3c4043;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.nearby-rag-suggestions {
+  display: grid;
+  gap: 7px;
+}
+
+.nearby-rag-chip {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(60, 64, 67, 0.12);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #202124;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nearby-rag-chip:hover {
+  border-color: rgba(15, 123, 97, 0.28);
+}
+
+.nearby-rag-chip span {
+  color: #5f6368;
+  font-size: 0.82rem;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;
