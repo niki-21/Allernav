@@ -11,7 +11,7 @@ from allernav_api.models import AllergyTag, LatLng, NearbySuggestionRequest, Pla
 from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuItem, MenuSection, MenuSource, SourceType
 from allernav_api.agent_service import analyze_menu_service
 from allernav_api.menu_ingestion import save_menu_source
-from allernav_api.rag_service import suggest_nearby_places_service
+from allernav_api.rag_service import restaurant_search_query, suggest_nearby_places_service
 from fastapi.testclient import TestClient
 from main import allowed_origins
 from app import app
@@ -240,6 +240,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.places[0].place.id, "alpha")
         self.assertGreaterEqual(len(response.evidence), 1)
         self.assertIn("verification", response.answer.lower())
+
+    def test_nearby_rag_normalizes_broad_assistant_questions_to_restaurants(self) -> None:
+        self.assertEqual(restaurant_search_query("Suggest nearby places here"), "restaurants")
+        self.assertEqual(restaurant_search_query("Suggest sushi options nearby"), "sushi restaurants")
 
 
 if __name__ == "__main__":

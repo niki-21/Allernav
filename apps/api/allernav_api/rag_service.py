@@ -78,8 +78,45 @@ def collect_candidate_places(
             places.append(place_from_details(details))
         return places
 
-    query = payload.query.strip() or "restaurants"
+    query = restaurant_search_query(payload.question, payload.query)
     return client.search_places(query, center, max_results=payload.max_places)
+
+
+def restaurant_search_query(question: str, fallback: str = "") -> str:
+    text = f"{question} {fallback}".lower()
+    cuisine_terms = [
+        "bagel",
+        "bakery",
+        "breakfast",
+        "brunch",
+        "burger",
+        "cafe",
+        "chinese",
+        "deli",
+        "dinner",
+        "gluten free",
+        "indian",
+        "italian",
+        "japanese",
+        "korean",
+        "lunch",
+        "mediterranean",
+        "mexican",
+        "pizza",
+        "ramen",
+        "restaurant",
+        "salad",
+        "sushi",
+        "thai",
+        "vegan",
+        "vegetarian",
+    ]
+    matched = [term for term in cuisine_terms if term in text]
+    if not matched:
+        return "restaurants"
+    if "restaurant" in matched or "restaurants" in text:
+        return "restaurants"
+    return f"{matched[0]} restaurants"
 
 
 def place_from_details(details: dict[str, Any]) -> PlaceListItem:

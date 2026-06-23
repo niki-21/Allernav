@@ -342,6 +342,28 @@ export default function Home() {
         rankedPlaces.slice(0, 8).map((place) => place.id),
       );
       setNearbyAnswer(response);
+      const suggestedPlaces = response.places.map((suggestion) => suggestion.place);
+      if (suggestedPlaces.length > 0) {
+        const firstSuggestion = suggestedPlaces[0];
+        const existingIds = new Set(places.map((place) => place.id));
+        const newPlaces = suggestedPlaces.filter((place) => !existingIds.has(place.id));
+        if (newPlaces.length > 0) {
+          startTransition(() => {
+            setPlaces((current) => [...newPlaces, ...current]);
+            setDetailStates((current) => ({
+              ...current,
+              ...Object.fromEntries(newPlaces.map((place) => [place.id, { status: "loading" as const }])),
+            }));
+          });
+          const sequence = ++requestSequence.current;
+          void hydratePlaces(newPlaces, selectedAllergens, sequence);
+        }
+        setSelectedPlaceId((current) => current ?? firstSuggestion.id);
+        setMapFocusPlaceId(firstSuggestion.id);
+        setSearchTargetPlaceId(firstSuggestion.id);
+        setSearchCenter(firstSuggestion.location);
+        setMapCenter(firstSuggestion.location);
+      }
     } catch (error) {
       setNearbyAskState("error");
       setNearbyAskError(error instanceof Error ? error.message : "Nearby RAG failed.");
@@ -409,7 +431,7 @@ export default function Home() {
                 <span>Agentic RAG</span>
                 <strong>Ask AllerNav</strong>
               </div>
-              <small>{rankedPlaces.length ? `${Math.min(8, rankedPlaces.length)} candidates` : "search first"}</small>
+              <small>{rankedPlaces.length ? `${Math.min(8, rankedPlaces.length)} visible candidates` : "current map area"}</small>
             </div>
             <form
               className="nearby-rag-form"
@@ -424,7 +446,7 @@ export default function Home() {
                 rows={2}
                 aria-label="Ask AllerNav for nearby restaurant suggestions"
               />
-              <button type="submit" disabled={nearbyAskState === "loading" || rankedPlaces.length === 0}>
+              <button type="submit" disabled={nearbyAskState === "loading"}>
                 {nearbyAskState === "loading" ? "Checking..." : "Ask"}
               </button>
             </form>
@@ -473,7 +495,7 @@ export default function Home() {
 
             {!rankedPlaces.length && !searchError && (
               <p className="empty-results">
-                Search for restaurants or use your location to find nearby places.
+                Search for restaurants, use your location, or ask AllerNav to suggest places in the current map area.
                 {locationStatus === "denied" ? " Location permission was not available." : ""}
               </p>
             )}
