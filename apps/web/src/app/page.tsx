@@ -453,7 +453,6 @@ export default function Home() {
             {nearbyAskError && <p className="panel-error">{nearbyAskError}</p>}
             {nearbyAnswer && (
               <div className="nearby-rag-answer">
-                <p>{nearbyAnswer.answer}</p>
                 {nearbyAnswer.places.length > 0 && (
                   <div className="nearby-rag-suggestions">
                     {nearbyAnswer.places.map((suggestion) => (
@@ -464,17 +463,12 @@ export default function Home() {
                         className="nearby-rag-chip"
                       >
                         <strong>{suggestion.place.name}</strong>
-                        <span>
-                          {Math.round(suggestion.confidence * 100)}% · {suggestion.menu_item_count} menu items
-                        </span>
+                        <span>{Math.round(suggestion.confidence * 100)}/100</span>
                       </button>
                     ))}
                   </div>
                 )}
-                <small>
-                  Retrieval: {nearbyAnswer.retrieval_mode.replaceAll("_", " ")} · {nearbyAnswer.evidence.length} cited
-                  fragments
-                </small>
+                {nearbyAnswer.places.length === 0 && <p>{nearbyAnswer.answer}</p>}
               </div>
             )}
           </section>

@@ -57,13 +57,15 @@ function displayHostName(url: string): string {
   }
 }
 
+function formatAllergenList(values: string[]): string {
+  return values.map((value) => value.replace("_", " ")).join(", ");
+}
+
 export default function TrustPanel({
   place,
   detailState,
   onRetry,
-  onAskRestaurant,
   askResponse,
-  isAskingRestaurant = false,
 }: TrustPanelProps) {
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
@@ -118,15 +120,9 @@ export default function TrustPanel({
     reviewSignalCount > 0
         ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"}`
         : "No allergy-specific review signals";
-  const reviewSourceLine = reviewSource
-    ? reviewSource.expanded_reviews_configured
-      ? reviewSource.expanded_review_status === "deferred"
-        ? `Expanded Apify reviews are configured but loaded separately so place details stay fast. Showing ${reviewSource.google_review_count} Google snippet${reviewSource.google_review_count === 1 ? "" : "s"} now.`
-        : reviewSource.expanded_review_count > 0
-        ? `Apify expanded reviews analyzed: ${reviewSource.expanded_review_count}. Showing ${reviewSource.displayed_review_count} most relevant of ${reviewSource.analyzed_review_count} total review snippets.`
-        : `Apify is configured, but no expanded reviews were returned for this place. Showing ${reviewSource.google_review_count} Google snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
-      : `Apify is not configured for this running server. Showing Google’s limited review sample of ${reviewSource.google_review_count} snippet${reviewSource.google_review_count === 1 ? "" : "s"}.`
-    : "Showing the review snippets returned by the current place details source.";
+  const reviewSourceLine = reviewSource?.expanded_review_count
+    ? `${reviewSource.expanded_review_count} expanded reviews scanned.`
+    : `${reviewSource?.google_review_count ?? reviewSnippets.length} Google review snippets scanned.`;
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
   const agentRecommendation = data.agent_recommendation ?? null;
   const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
@@ -204,18 +200,6 @@ export default function TrustPanel({
               {agentConfidencePercent !== null && <p>{agentConfidencePercent}% source confidence.</p>}
             </div>
           )}
-          {agentRecommendation && agentRecommendation.missing_information.length > 0 && (
-            <div className="overview-line">
-              <strong>Missing information</strong>
-              <p>{agentRecommendation.missing_information.slice(0, 2).join(" ")}</p>
-            </div>
-          )}
-          {agentRecommendation && agentRecommendation.recommended_questions.length > 0 && (
-            <div className="overview-line">
-              <strong>Questions for staff</strong>
-              <p>{agentRecommendation.recommended_questions.slice(0, 2).join(" ")}</p>
-            </div>
-          )}
         </div>
       )}
 
@@ -226,7 +210,7 @@ export default function TrustPanel({
               <strong>Menu</strong>
               <p>
                 {menuItemCount > 0
-                  ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                  ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted.`
                   : "No reliable dish-level menu found yet."}
               </p>
             </div>
@@ -236,52 +220,32 @@ export default function TrustPanel({
               </a>
             )}
           </div>
-          {data.recommended_items.length > 0 && (
-            <div className="verify-list">
-              <strong>Items to verify</strong>
-              {data.recommended_items.slice(0, 5).map((item) => (
-                <article
-                  key={`${item.section_title ?? "pick"}-${item.name}`}
-                  className="verify-item-row"
-                  title={`${item.reason}${item.caution ? ` ${item.caution}` : ""}`}
-                >
-                  <div>
-                    <strong>{item.name}</strong>
-                    <p>{item.reason}</p>
-                    {item.caution && <p className="muted-line">{item.caution}</p>}
-                  </div>
-                  <span>Verify</span>
-                </article>
-              ))}
-            </div>
-          )}
-
           {menuSections.length > 0 ? (
             <div className="menu-section-list google-menu-list">
               {menuSections.slice(0, 3).map((section) => (
                 <section key={section.title} className="menu-list-section">
                   <h3>{section.title}</h3>
                   {section.items.slice(0, 6).map((item) => (
-                    <article
-                      key={`${section.title}-${item.name}`}
-                      className="menu-list-item compact-menu-row"
-                      title={item.description ?? "Menu item extracted from source. Verify ingredients with staff."}
-                    >
-                      <div>
-                        <strong>{item.name}</strong>
-                        {item.description && <p>{item.description}</p>}
-                        {item.likely_risky_for.some((allergen) => data.selected_allergens.includes(allergen)) && (
-                          <p className="menu-risk-note">
-                            Watch:{" "}
-                            {item.likely_risky_for
-                              .filter((allergen) => data.selected_allergens.includes(allergen))
-                              .map((allergen) => allergen.replace("_", " "))
-                              .join(", ")}
-                          </p>
-                        )}
-                      </div>
-                      <span>{item.price ?? "Verify"}</span>
-                    </article>
+                    (() => {
+                      const relevantRisks = item.likely_risky_for.filter((allergen) =>
+                        data.selected_allergens.includes(allergen),
+                      );
+                      return (
+                        <article
+                          key={`${section.title}-${item.name}`}
+                          className={`menu-list-item compact-menu-row ${relevantRisks.length ? "has-risk" : ""}`}
+                        >
+                          <div>
+                            <strong>{item.name}</strong>
+                            {relevantRisks.length > 0 && item.description && <p>{item.description}</p>}
+                            {relevantRisks.length > 0 && (
+                              <p className="menu-risk-note">Flag: {formatAllergenList(relevantRisks)}</p>
+                            )}
+                          </div>
+                          {item.price && <span>{item.price}</span>}
+                        </article>
+                      );
+                    })()
                   ))}
                 </section>
               ))}
@@ -301,26 +265,6 @@ export default function TrustPanel({
             </article>
           )}
 
-          {agentRecommendation && agentRecommendation.dish_results.length > 0 && (
-            <div className="menu-section-list compact-recommendations">
-              <strong>Agent dish risk</strong>
-              {agentRecommendation.dish_results.slice(0, 3).map((item) => (
-                <article key={`${item.dish}-${item.risk_level}`} className="menu-list-item">
-                  <strong>{item.dish}</strong>
-                  <p>
-                    {formatRiskLabel(item.risk_level)} · {Math.round(item.confidence * 100)}% confidence
-                  </p>
-                  {item.detected_allergens.length > 0 && (
-                    <p>Flags: {item.detected_allergens.map((allergen) => allergen.replace("_", " ")).join(", ")}</p>
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
-
-          <button type="button" className="ask-button" onClick={onAskRestaurant} disabled={isAskingRestaurant}>
-            {isAskingRestaurant ? "Saving question..." : "Ask restaurant to verify"}
-          </button>
           {askResponse && <p className="menu-job-note">{askResponse.suggested_script}</p>}
         </div>
       )}
@@ -331,14 +275,10 @@ export default function TrustPanel({
           <p className="panel-note">{reviewSourceLine}</p>
 
           <div className="review-group">
-            <strong>Allergy review signals</strong>
-            <p className="panel-note">
-              Reviews are warning context only. AllerNav does not use them to prove that a dish is lower risk.
-            </p>
             <div className="evidence-list compact">
               {data.evidence.length === 0 && (
                 <article className="evidence-item empty">
-                  <p className="evidence-excerpt">No allergy-specific review quotes were found for this place yet.</p>
+                  <p className="evidence-excerpt">No allergy-specific review signals found.</p>
                 </article>
               )}
 
@@ -361,26 +301,6 @@ export default function TrustPanel({
               })}
             </div>
           </div>
-
-          {data.evidence.length === 0 && reviewSnippets.length > 0 && (
-            <div className="review-group">
-              <strong>Returned review sample</strong>
-              <p className="panel-note">
-                These snippets were returned, but no allergy-specific terms matched your selected allergens.
-              </p>
-              <div className="evidence-list compact">
-                {reviewSnippets.slice(0, 3).map((review) => (
-                  <article key={review.review_id} className="evidence-item neutral">
-                    <div className="evidence-item-header">
-                      <span>{review.author_name ?? "Review"}</span>
-                      <span>{review.rating ? `${review.rating.toFixed(1)}★` : review.relative_publish_time ?? "Review"}</span>
-                    </div>
-                    <p className="evidence-excerpt">{review.text}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 

@@ -353,22 +353,10 @@ def deterministic_answer(
 ) -> str:
     if not suggestions:
         return (
-            "I could not retrieve enough nearby place or menu evidence to suggest candidates. "
-            "Try searching a specific cuisine or opening a place so AllerNav can capture menu evidence."
+            "No ranked restaurant candidates yet. Try a cuisine or move the map."
         )
 
-    allergen_text = ", ".join(allergen.value.replace("_", " ") for allergen in payload.allergens) or "your allergens"
-    lines = [
-        f"For {allergen_text}, start with these places as verification candidates rather than safe choices:",
-    ]
+    lines = ["Restaurant candidates ranked from available menu and place evidence:"]
     for suggestion in suggestions:
-        evidence_count = len(suggestion.evidence)
-        lines.append(
-            f"- {suggestion.place.name}: {suggestion.menu_item_count} stored menu items, "
-            f"{evidence_count} retrieved evidence fragment{'s' if evidence_count != 1 else ''}, "
-            f"{round(suggestion.confidence * 100)}% confidence. {suggestion.risk_note}"
-        )
-    if missing_information:
-        lines.append("Missing information: " + " ".join(missing_information))
-    lines.append("Ask staff: " + questions[0])
+        lines.append(f"- {suggestion.place.name}: {round(suggestion.confidence * 100)}/100")
     return "\n".join(lines)

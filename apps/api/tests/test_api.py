@@ -239,7 +239,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.places[0].place.id, "alpha")
         self.assertGreaterEqual(len(response.evidence), 1)
-        self.assertIn("verification", response.answer.lower())
+        self.assertIn("43/100", response.answer)
 
     def test_nearby_rag_normalizes_broad_assistant_questions_to_restaurants(self) -> None:
         self.assertEqual(restaurant_search_query("Suggest nearby places here"), "restaurants")

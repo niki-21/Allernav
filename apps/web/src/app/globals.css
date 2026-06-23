@@ -1649,8 +1649,7 @@ body {
   cursor: help;
 }
 
-.verify-item-row span,
-.compact-menu-row > span {
+.verify-item-row span {
   align-self: start;
   border-radius: 999px;
   background: #e8f0fe;
@@ -1660,6 +1659,19 @@ body {
   line-height: 1;
   padding: 7px 9px;
   white-space: nowrap;
+}
+
+.compact-menu-row > span {
+  align-self: start;
+  color: #5f6368;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.compact-menu-row.has-risk {
+  border-left: 3px solid #b3261e;
+  padding-left: 10px;
 }
 
 .verify-item-row p,
