@@ -358,27 +358,77 @@ def ingest_menu_from_website(
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
-    rendered_discovery = discover_rendered_menu_evidence_safely(website_url) if fetch_html is None else RenderedMenuDiscovery(urls=[], pages=[])
-    candidate_urls = discover_candidate_urls(
+    static_candidate_urls = discover_candidate_urls(
         website_url,
         fetcher,
-        allow_rendered_discovery=fetch_html is None,
-        rendered_urls=rendered_discovery.urls,
+        allow_rendered_discovery=False,
     )
+    last_source: MenuSource | None = ingest_first_matching_source(
+        candidate_urls=static_candidate_urls,
+        fetcher=fetcher,
+        document_extractor=document_extractor,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+    )
+    if last_source and last_source.sections:
+        return last_source
+
+    rendered_discovery = discover_rendered_menu_evidence_safely(website_url) if fetch_html is None else RenderedMenuDiscovery(urls=[], pages=[])
+    rendered_source = ingest_rendered_menu_pages(
+        rendered_discovery=rendered_discovery,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+    )
+    if rendered_source.sections:
+        return rendered_source
+    if rendered_source.source_url:
+        last_source = rendered_source
+
+    rendered_candidate_urls = [url for url in rendered_discovery.urls if url not in static_candidate_urls]
+    rendered_link_source = ingest_first_matching_source(
+        candidate_urls=rendered_candidate_urls,
+        fetcher=fetcher,
+        document_extractor=document_extractor,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+    )
+    if rendered_link_source and rendered_link_source.sections:
+        return rendered_link_source
+    if rendered_link_source:
+        last_source = rendered_link_source
+
+    failed_source = last_source or MenuSource(
+        source_type=SourceType.RESTAURANT_WEBSITE,
+        source_url=website_url,
+        source_timestamp=datetime.now(UTC).isoformat(),
+        reliability=0.7,
+        raw_text=None,
+        sections=[],
+    )
+    save_menu_source(
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        source=failed_source,
+        status="failed",
+        error_message="No structured menu items were extracted from official website pages.",
+        db_path=db_path,
+    )
+    return failed_source
+
+
+def ingest_first_matching_source(
+    *,
+    candidate_urls: list[str],
+    fetcher: FetchHtml,
+    document_extractor: ExtractDocument,
+    restaurant_id: str,
+    restaurant_name: str | None,
+    db_path: Path | None = None,
+) -> MenuSource | None:
     last_source: MenuSource | None = None
-
-    for rendered_page in rendered_discovery.pages:
-        source = parse_rendered_menu_text(rendered_page.visible_text, rendered_page.url)
-        last_source = source
-        if source.sections:
-            save_menu_source(
-                restaurant_id=restaurant_id,
-                restaurant_name=restaurant_name,
-                source=source,
-                db_path=db_path,
-            )
-            return source
-
     for candidate_url in candidate_urls:
         if looks_like_document_url(candidate_url):
             source = parse_menu_document(candidate_url, document_extractor)
@@ -406,24 +456,36 @@ def ingest_menu_from_website(
                 db_path=db_path,
             )
             return source
+    return last_source
 
-    failed_source = last_source or MenuSource(
+
+def ingest_rendered_menu_pages(
+    *,
+    rendered_discovery: RenderedMenuDiscovery,
+    restaurant_id: str,
+    restaurant_name: str | None,
+    db_path: Path | None = None,
+) -> MenuSource:
+    last_source = MenuSource(
         source_type=SourceType.RESTAURANT_WEBSITE,
-        source_url=website_url,
+        source_url=None,
         source_timestamp=datetime.now(UTC).isoformat(),
-        reliability=0.7,
-        raw_text=None,
+        reliability=0.25,
         sections=[],
+        extraction_method="apify_rendered_text",
     )
-    save_menu_source(
-        restaurant_id=restaurant_id,
-        restaurant_name=restaurant_name,
-        source=failed_source,
-        status="failed",
-        error_message="No structured menu items were extracted from official website pages.",
-        db_path=db_path,
-    )
-    return failed_source
+    for rendered_page in rendered_discovery.pages:
+        source = parse_rendered_menu_text(rendered_page.visible_text, rendered_page.url)
+        last_source = source
+        if source.sections:
+            save_menu_source(
+                restaurant_id=restaurant_id,
+                restaurant_name=restaurant_name,
+                source=source,
+                db_path=db_path,
+            )
+            return source
+    return last_source
 
 
 def discover_candidate_urls(
