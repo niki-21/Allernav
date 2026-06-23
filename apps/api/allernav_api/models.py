@@ -373,6 +373,10 @@ class MenuRefreshJob(BaseModel):
     place_id: str
     status: str = "queued"
     message: str
+    item_count: int = 0
+    source_url: str | None = None
+    content_type: str | None = None
+    extraction_method: str | None = None
     created_at: str
     completed_at: str | None = None
 

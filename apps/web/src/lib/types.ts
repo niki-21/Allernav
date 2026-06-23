@@ -137,6 +137,10 @@ export interface MenuRefreshJob {
   place_id: string;
   status: "queued" | "running" | "complete" | "failed";
   message: string;
+  item_count?: number;
+  source_url?: string | null;
+  content_type?: string | null;
+  extraction_method?: string | null;
   created_at: string;
   completed_at?: string | null;
 }

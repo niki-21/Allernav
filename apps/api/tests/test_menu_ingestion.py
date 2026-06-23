@@ -4,8 +4,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from allernav_api.agent_graph import run_dining_safety_graph
+from allernav_api.apify_menu_discovery import RenderedMenuDiscovery, RenderedMenuPage
 from allernav_api.document_intelligence import DocumentExtraction
 from allernav_api.menu_ingestion import (
     discover_candidate_urls,
@@ -128,6 +130,21 @@ PROMO_AND_PREP_COPY_HTML = """
 </html>
 """
 
+ADD_ON_MODIFIER_HTML = """
+<html>
+  <section class="menu">
+    <article class="menu-item">
+      <h3>add</h3>
+      <p>chicken 10 / shrimp 14 / hanger steak 16</p>
+    </article>
+    <article class="menu-item">
+      <h3>Steak Frites</h3>
+      <p>Hanger steak, fries, herb butter, and greens.</p>
+    </article>
+  </section>
+</html>
+"""
+
 
 class MenuIngestionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -186,6 +203,14 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(item_names, ["Crispy Chicken Sandwich"])
         self.assertNotIn("Sauced, fried or grilled", raw_text)
         self.assertNotIn("3 for Me", raw_text)
+
+    def test_rejects_add_on_modifier_rows_before_storage(self) -> None:
+        source = parse_menu_html(ADD_ON_MODIFIER_HTML, "https://example.com/menu")
+        item_names = [item.name for section in source.sections for item in section.items]
+        raw_text = source.raw_text or ""
+
+        self.assertEqual(item_names, ["Steak Frites"])
+        self.assertNotIn("chicken 10 / shrimp 14 / hanger steak 16", raw_text)
 
     def test_stores_and_reloads_menu_records_from_sqlite(self) -> None:
         source = MenuSource(
@@ -271,6 +296,51 @@ class MenuIngestionTests(unittest.TestCase):
 
         self.assertIn("https://restaurant.example/food", candidates)
         self.assertIn("https://restaurant.example/menus/current.pdf", candidates)
+
+    def test_includes_rendered_menu_candidates_when_enabled(self) -> None:
+        with patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=RenderedMenuDiscovery(urls=["https://restaurant.example/rendered-menu"], pages=[]),
+        ):
+            candidates = discover_candidate_urls(
+                "https://restaurant.example/",
+                fetch_html=lambda url: "<html>No static menu links</html>"
+                if url == "https://restaurant.example/"
+                else None,
+                allow_rendered_discovery=True,
+            )
+
+        self.assertIn("https://restaurant.example/rendered-menu", candidates)
+
+    def test_ingests_rendered_menu_text_before_static_fallback(self) -> None:
+        with patch("allernav_api.menu_ingestion.fetch_html_url", return_value="<html>No static menu</html>"), patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=RenderedMenuDiscovery(
+                urls=[],
+                pages=[
+                    RenderedMenuPage(
+                        url="https://restaurant.example/",
+                        title="Menu",
+                        visible_text=(
+                            "Dinner Menu\n"
+                            "Chicken Bowl - rice, chicken, tomato sauce\n"
+                            "Shrimp Salad - greens, shrimp, lemon"
+                        ),
+                    )
+                ],
+            ),
+        ):
+            source = ingest_menu_from_website(
+                restaurant_id="rendered",
+                restaurant_name="Rendered",
+                website_url="https://restaurant.example/",
+                fetch_html=None,
+                db_path=self.db_path,
+            )
+
+        item_names = [item.name for section in source.sections for item in section.items]
+        self.assertEqual(source.extraction_method, "apify_rendered_text")
+        self.assertIn("Chicken Bowl", item_names)
 
     def test_prioritizes_pdf_and_provider_menu_links_from_homepage(self) -> None:
         links = extract_candidate_menu_urls(
