@@ -139,18 +139,30 @@ def local_hybrid_search(payload: HybridSearchRequest) -> HybridSearchResponse:
         restaurant_name=None,
         source=source,
     )
-    results: list[HybridSearchResult] = []
+    scored_results: list[tuple[float, HybridSearchResult]] = []
     keyword_query = build_keyword_query(payload.query, payload.allergens).lower()
     query_terms = [term for term in keyword_query.split() if len(term) >= 3]
     for document in documents:
         text = str(document["raw_text"]).lower()
         matched_allergens = [allergen for allergen in detect_allergens_in_text(text) if not payload.allergens or allergen in payload.allergens]
         keyword_match = any(term in text for term in query_terms) or bool(matched_allergens)
-        vector_only = bool(payload.vector) and not keyword_match
-        if not keyword_match and not payload.vector:
+        semantic_score = local_semantic_score(payload.query, text)
+        if payload.vector and not keyword_match:
+            retrieval_mode = "vector"
+        elif keyword_match and semantic_score > 0:
+            retrieval_mode = "hybrid"
+        elif keyword_match:
+            retrieval_mode = "keyword"
+        elif semantic_score > 0:
+            retrieval_mode = "semantic"
+        else:
+            retrieval_mode = ""
+        if not retrieval_mode:
             continue
-        results.append(document_to_result(document, matched_allergens, "vector" if vector_only else "hybrid"))
-    return HybridSearchResponse(query=payload.query, results=results[: payload.top])
+        score = (10 if keyword_match else 0) + semantic_score + len(matched_allergens) * 5
+        scored_results.append((score, document_to_result(document, matched_allergens, retrieval_mode)))
+    scored_results.sort(key=lambda item: item[0], reverse=True)
+    return HybridSearchResponse(query=payload.query, results=[result for _, result in scored_results[: payload.top]])
 
 
 class AzureSearchClient:
@@ -214,8 +226,20 @@ def document_to_result(document: dict[str, Any], matched_allergens: list[Allergy
         raw_text=str(document.get("raw_text") or ""),
         matched_allergens=matched_allergens,
         retrieval_mode=retrieval_mode,
-        can_support_low_risk=retrieval_mode != "vector" and source_type != SourceType.REVIEW,
+        can_support_low_risk=retrieval_mode not in {"vector", "semantic"} and source_type != SourceType.REVIEW,
     )
+
+
+def local_semantic_score(query: str, text: str) -> float:
+    lowered_query = query.lower()
+    intent_terms: list[str] = []
+    if any(term in lowered_query for term in ["lower risk", "safer", "suggest", "recommend", "option", "evaluate"]):
+        intent_terms.extend(["grilled", "roasted", "baked", "rice", "salad", "vegetable", "veggie", "bowl", "plain"])
+    if any(term in lowered_query for term in ["breakfast", "brunch"]):
+        intent_terms.extend(["oatmeal", "fruit", "toast", "egg", "coffee"])
+    if any(term in lowered_query for term in ["dinner", "lunch"]):
+        intent_terms.extend(["chicken", "rice", "salad", "steak", "vegetable"])
+    return float(sum(1 for term in intent_terms if term_matches(text, term)))
 
 
 def detect_allergens_in_text(text: str) -> list[AllergyTag]:

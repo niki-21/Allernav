@@ -21,6 +21,8 @@ from allernav_api.models import (
     HybridSearchRequest,
     HybridSearchResponse,
     MenuRefreshJob,
+    NearbySuggestionRequest,
+    NearbySuggestionResponse,
     PlaceDetailsResponse,
     PlaceMenu,
     PlaceReviewSnippet,
@@ -32,6 +34,7 @@ from allernav_api.models import (
     SearchResponse,
     UserProfileResponse,
 )
+from allernav_api.rag_service import suggest_nearby_places_service
 from allernav_api.agent_service import (
     analyze_menu_service,
     analyze_restaurant_service,
@@ -151,6 +154,19 @@ async def recommend_dishes_endpoint(payload: RecommendDishesRequest) -> Recommen
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(payload: ChatRequest) -> ChatResponse:
     return await chat_service(payload)
+
+
+@app.post("/nearby-suggestions", response_model=NearbySuggestionResponse)
+@app.post("/api/nearby-suggestions", response_model=NearbySuggestionResponse)
+@app.post("/api/rag/nearby-suggestions", response_model=NearbySuggestionResponse)
+async def nearby_suggestions_endpoint(
+    payload: NearbySuggestionRequest,
+    client: GooglePlacesClient = Depends(get_places_client),
+) -> NearbySuggestionResponse:
+    try:
+        return await suggest_nearby_places_service(payload, client)
+    except GooglePlacesError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/feedback", response_model=FeedbackResponse)

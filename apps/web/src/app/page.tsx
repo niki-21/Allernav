@@ -11,10 +11,17 @@ import {
   ALLERGY_PROFILE_STORAGE_KEY,
   DEFAULT_ALLERGENS,
 } from "@/lib/allergens";
-import { analyzeRestaurant, askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
+import { analyzeRestaurant, askNearbyPlaces, askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
 import { rankPlaces, shouldShowSearchAreaButton } from "@/lib/placeRanking";
 import { applyPlaceDetailError, applyPlaceDetailSuccess, seedPlaceDetailsState } from "@/lib/placeState";
-import type { AllergyTag, AskRestaurantResponse, LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type {
+  AllergyTag,
+  AskRestaurantResponse,
+  LatLng,
+  NearbySuggestionResponse,
+  PlaceDetailState,
+  PlaceSummary,
+} from "@/lib/types";
 
 const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
 const DEFAULT_QUERY = "";
@@ -34,6 +41,10 @@ export default function Home() {
   const [locationStatus, setLocationStatus] = useState<"idle" | "locating" | "denied">("idle");
   const [askResponses, setAskResponses] = useState<Record<string, AskRestaurantResponse>>({});
   const [askingPlaceId, setAskingPlaceId] = useState<string | null>(null);
+  const [nearbyQuestion, setNearbyQuestion] = useState("Suggest nearby places to evaluate for my allergies");
+  const [nearbyAnswer, setNearbyAnswer] = useState<NearbySuggestionResponse | null>(null);
+  const [nearbyAskState, setNearbyAskState] = useState<"idle" | "loading" | "error">("idle");
+  const [nearbyAskError, setNearbyAskError] = useState<string | null>(null);
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
   const requestSequence = useRef(0);
@@ -316,6 +327,29 @@ export default function Home() {
     }
   };
 
+  const askNearby = async () => {
+    const question = nearbyQuestion.trim();
+    if (!question) {
+      return;
+    }
+    setNearbyAskState("loading");
+    setNearbyAskError(null);
+    try {
+      const response = await askNearbyPlaces(
+        question,
+        mapCenter,
+        selectedAllergens,
+        rankedPlaces.slice(0, 8).map((place) => place.id),
+      );
+      setNearbyAnswer(response);
+    } catch (error) {
+      setNearbyAskState("error");
+      setNearbyAskError(error instanceof Error ? error.message : "Nearby RAG failed.");
+      return;
+    }
+    setNearbyAskState("idle");
+  };
+
   return (
     <main className="app-shell">
       <div className="map-layer">
@@ -368,6 +402,60 @@ export default function Home() {
             </summary>
             <AllergyProfilePicker selectedAllergens={selectedAllergens} onToggle={toggleAllergen} />
           </details>
+
+          <section className="nearby-rag-panel">
+            <div className="nearby-rag-header">
+              <div>
+                <span>Agentic RAG</span>
+                <strong>Ask AllerNav</strong>
+              </div>
+              <small>{rankedPlaces.length ? `${Math.min(8, rankedPlaces.length)} candidates` : "search first"}</small>
+            </div>
+            <form
+              className="nearby-rag-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void askNearby();
+              }}
+            >
+              <textarea
+                value={nearbyQuestion}
+                onChange={(event) => setNearbyQuestion(event.target.value)}
+                rows={2}
+                aria-label="Ask AllerNav for nearby restaurant suggestions"
+              />
+              <button type="submit" disabled={nearbyAskState === "loading" || rankedPlaces.length === 0}>
+                {nearbyAskState === "loading" ? "Checking..." : "Ask"}
+              </button>
+            </form>
+            {nearbyAskError && <p className="panel-error">{nearbyAskError}</p>}
+            {nearbyAnswer && (
+              <div className="nearby-rag-answer">
+                <p>{nearbyAnswer.answer}</p>
+                {nearbyAnswer.places.length > 0 && (
+                  <div className="nearby-rag-suggestions">
+                    {nearbyAnswer.places.map((suggestion) => (
+                      <button
+                        type="button"
+                        key={suggestion.place.id}
+                        onClick={() => selectPlace(suggestion.place.id)}
+                        className="nearby-rag-chip"
+                      >
+                        <strong>{suggestion.place.name}</strong>
+                        <span>
+                          {Math.round(suggestion.confidence * 100)}% · {suggestion.menu_item_count} menu items
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <small>
+                  Retrieval: {nearbyAnswer.retrieval_mode.replaceAll("_", " ")} · {nearbyAnswer.evidence.length} cited
+                  fragments
+                </small>
+              </div>
+            )}
+          </section>
 
           {searchError && <p className="panel-error">{searchError}</p>}
 

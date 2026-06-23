@@ -4,6 +4,7 @@ import type {
   AskRestaurantResponse,
   LatLng,
   MenuRefreshJob,
+  NearbySuggestionResponse,
   PlaceDetailsResponse,
   ReviewRefreshJob,
   SearchResponse,
@@ -23,6 +24,23 @@ export function buildMenuRefreshPayload(context: { placeName?: string | null; we
   return {
     restaurant_name: context.placeName ?? null,
     website_url: context.websiteUrl ?? null,
+  };
+}
+
+export function buildNearbySuggestionPayload(
+  question: string,
+  center: LatLng,
+  allergens: AllergyTag[],
+  candidatePlaceIds: string[],
+) {
+  return {
+    question,
+    query: question,
+    center,
+    allergens,
+    candidate_place_ids: candidatePlaceIds,
+    max_places: Math.min(8, Math.max(1, candidatePlaceIds.length || 6)),
+    top_evidence: 3,
   };
 }
 
@@ -105,6 +123,25 @@ export async function askRestaurant(
     throw new Error(await response.text());
   }
   return (await response.json()) as AskRestaurantResponse;
+}
+
+export async function askNearbyPlaces(
+  question: string,
+  center: LatLng,
+  allergens: AllergyTag[],
+  candidatePlaceIds: string[],
+): Promise<NearbySuggestionResponse> {
+  const response = await fetch(`${API_PREFIX}/rag/nearby-suggestions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(buildNearbySuggestionPayload(question, center, allergens, candidatePlaceIds)),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as NearbySuggestionResponse;
 }
 
 export async function analyzeRestaurant(
