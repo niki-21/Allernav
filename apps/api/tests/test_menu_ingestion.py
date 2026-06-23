@@ -259,6 +259,25 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.sections[0].items[0].name, "Chicken Alfredo")
 
+    def test_static_menu_ingestion_does_not_wait_for_rendered_discovery(self) -> None:
+        pages = {
+            "https://restaurant.example/": '<a href="/menu">Menu</a>',
+            "https://restaurant.example/menu": JSON_LD_MENU,
+        }
+
+        with patch("allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely") as rendered_discovery:
+            source = ingest_menu_from_website(
+                restaurant_id="static-first",
+                restaurant_name="Static First",
+                website_url="https://restaurant.example/",
+                fetch_html=lambda url: pages.get(url),
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(source.source_url, "https://restaurant.example/menu")
+        self.assertEqual(source.sections[0].items[0].name, "Chicken Alfredo")
+        rendered_discovery.assert_not_called()
+
     def test_discovers_common_menu_paths_when_homepage_has_no_menu_link(self) -> None:
         candidates = discover_candidate_urls(
             "https://restaurant.example/",
