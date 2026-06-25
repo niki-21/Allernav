@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from hashlib import sha1
 from typing import Any
 from urllib import error, parse, request
+from .azure_openai_embeddings import AzureOpenAIEmbeddingClient, configured_embeddings
 
 from .menu_ingestion import load_menu_record, load_menu_source
 from .models import (
@@ -45,6 +46,8 @@ def build_index_documents(
         for item in section.items:
             raw_text = item_text(item)
             matched_allergens = detect_allergens_in_text(raw_text)
+            embedding = AzureOpenAIEmbeddingClient().embed_text(raw_text) if configured_embeddings() else []
+
             documents.append(
                 {
                     "id": document_id(restaurant_id, source, section.title, item.name),
@@ -63,7 +66,7 @@ def build_index_documents(
                         source.extraction_confidence if source.extraction_confidence is not None else source.reliability,
                     ),
                     "raw_text": raw_text,
-                    "embedding": [],
+                    "embedding": embedding,
                 }
             )
     return documents
@@ -74,6 +77,7 @@ def build_hybrid_query(payload: HybridSearchRequest) -> dict[str, Any]:
         "search": build_keyword_query(payload.query, payload.allergens),
         "top": payload.top,
     }
+
     filters = []
     if payload.restaurant_id:
         filters.append(f"restaurant_id eq '{escape_filter_value(payload.restaurant_id)}'")
@@ -84,17 +88,22 @@ def build_hybrid_query(payload: HybridSearchRequest) -> dict[str, Any]:
         filters.append(f"({source_filter})")
     if filters:
         body["filter"] = " and ".join(filters)
-    if payload.vector:
+
+    query_vector = payload.vector
+    if query_vector is None and configured_embeddings() and payload.query.strip():
+        query_vector = AzureOpenAIEmbeddingClient().embed_text(payload.query)
+
+    if query_vector:
         body["vectorQueries"] = [
             {
                 "kind": "vector",
-                "vector": payload.vector,
+                "vector": query_vector,
                 "fields": "embedding",
                 "k": payload.top,
             }
         ]
-    return body
 
+    return body
 
 def build_keyword_query(query: str, allergens: list[AllergyTag]) -> str:
     allergen_terms = [term for allergen in allergens for term in ALLERGEN_TERMS[allergen]]
@@ -204,9 +213,11 @@ class AzureSearchClient:
         try:
             with request.urlopen(req, timeout=20) as response:
                 return json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
-        except (error.HTTPError, error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Azure AI Search request failed: {exc.code} {detail}") from exc
+        except (error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError("Azure AI Search request failed.") from exc
-
 
 def document_to_result(document: dict[str, Any], matched_allergens: list[AllergyTag], retrieval_mode: str) -> HybridSearchResult:
     try:
