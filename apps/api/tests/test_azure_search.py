@@ -25,6 +25,10 @@ class AzureSearchTests(unittest.TestCase):
         os.environ.pop("AZURE_SEARCH_ENDPOINT", None)
         os.environ.pop("AZURE_SEARCH_API_KEY", None)
         os.environ.pop("AZURE_SEARCH_INDEX_NAME", None)
+        os.environ.pop("AZURE_OPENAI_ENDPOINT", None)
+        os.environ.pop("AZURE_OPENAI_API_KEY", None)
+        os.environ.pop("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", None)
+        os.environ.pop("AZURE_OPENAI_API_VERSION", None)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()

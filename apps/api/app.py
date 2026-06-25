@@ -98,6 +98,19 @@ def health() -> dict[str, object]:
     google_client = bool(os.getenv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"))
     gemini = bool(os.getenv("GEMINI_API_KEY"))
     supabase = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+    azure_document_intelligence = bool(
+        os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT") and os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+    )
+    azure_search = bool(
+        os.getenv("AZURE_SEARCH_ENDPOINT")
+        and os.getenv("AZURE_SEARCH_API_KEY")
+        and os.getenv("AZURE_SEARCH_INDEX_NAME")
+    )
+    azure_openai_embeddings = bool(
+        os.getenv("AZURE_OPENAI_ENDPOINT")
+        and os.getenv("AZURE_OPENAI_API_KEY")
+        and os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    )
     apify = bool(os.getenv("APIFY_TOKEN"))
     apify_menu_discovery = apify and os.getenv("APIFY_MENU_DISCOVERY_ENABLED", "true").strip().lower() not in {
         "0",
@@ -114,6 +127,9 @@ def health() -> dict[str, object]:
             "google_maps_client": google_client,
             "gemini": gemini,
             "supabase": supabase,
+            "azure_document_intelligence": azure_document_intelligence,
+            "azure_search": azure_search,
+            "azure_openai_embeddings": azure_openai_embeddings,
             "apify_reviews": apify,
             "apify_menu_discovery": apify_menu_discovery,
             "langsmith": langsmith,

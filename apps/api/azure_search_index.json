@@ -1,0 +1,52 @@
+{
+  "name": "allernav-menu-evidence",
+  "fields": [
+    { "name": "id", "type": "Edm.String", "key": true, "filterable": true, "retrievable": true },
+
+    { "name": "restaurant_id", "type": "Edm.String", "filterable": true, "retrievable": true },
+    { "name": "restaurant_name", "type": "Edm.String", "searchable": true, "filterable": true, "retrievable": true },
+    { "name": "location", "type": "Edm.String", "searchable": true, "filterable": true, "retrievable": true },
+
+    { "name": "dish_name", "type": "Edm.String", "searchable": true, "retrievable": true },
+    { "name": "menu_section", "type": "Edm.String", "searchable": true, "filterable": true, "retrievable": true },
+    { "name": "ingredients", "type": "Edm.String", "searchable": true, "retrievable": true },
+
+    { "name": "allergens", "type": "Collection(Edm.String)", "filterable": true, "retrievable": true },
+    { "name": "source_type", "type": "Edm.String", "filterable": true, "retrievable": true },
+    { "name": "source_url", "type": "Edm.String", "retrievable": true },
+    { "name": "source_timestamp", "type": "Edm.String", "retrievable": true },
+    { "name": "confidence", "type": "Edm.Double", "filterable": true, "sortable": true, "retrievable": true },
+
+    { "name": "raw_text", "type": "Edm.String", "searchable": true, "retrievable": true },
+
+    {
+      "name": "embedding",
+      "type": "Collection(Edm.Single)",
+      "searchable": true,
+      "retrievable": false,
+      "stored": false,
+      "dimensions": 1536,
+      "vectorSearchProfile": "allernav-vector-profile"
+    }
+  ],
+  "vectorSearch": {
+    "algorithms": [
+      {
+        "name": "allernav-hnsw",
+        "kind": "hnsw",
+        "hnswParameters": {
+          "m": 4,
+          "efConstruction": 400,
+          "efSearch": 500,
+          "metric": "cosine"
+        }
+      }
+    ],
+    "profiles": [
+      {
+        "name": "allernav-vector-profile",
+        "algorithm": "allernav-hnsw"
+      }
+    ]
+  }
+}

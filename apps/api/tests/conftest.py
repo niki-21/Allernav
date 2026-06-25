@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+import os
+
+
+LIVE_SERVICE_ENV_VARS = (
+    "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+    "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+    "AZURE_SEARCH_ENDPOINT",
+    "AZURE_SEARCH_API_KEY",
+    "AZURE_SEARCH_INDEX_NAME",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+    "AZURE_OPENAI_API_VERSION",
+    "LANGSMITH_API_KEY",
+)
+
+
+for env_var in LIVE_SERVICE_ENV_VARS:
+    os.environ[env_var] = ""
+
+os.environ["LANGSMITH_TRACING"] = "false"
