@@ -10,6 +10,7 @@ out/
 __pycache__/
 *.py[cod]
 apps/api/.data/
+.data/
 
 # Environment files
 .env
