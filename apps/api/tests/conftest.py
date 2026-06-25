@@ -17,7 +17,10 @@ LIVE_SERVICE_ENV_VARS = (
 )
 
 
-for env_var in LIVE_SERVICE_ENV_VARS:
-    os.environ[env_var] = ""
+LIVE_CLOUD_ENABLED = os.getenv("ALLERNAV_LIVE_CLOUD_TESTS", "").lower() in {"1", "true", "yes"}
 
-os.environ["LANGSMITH_TRACING"] = "false"
+if not LIVE_CLOUD_ENABLED:
+    for env_var in LIVE_SERVICE_ENV_VARS:
+        os.environ[env_var] = ""
+
+    os.environ["LANGSMITH_TRACING"] = "false"

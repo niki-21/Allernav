@@ -963,6 +963,31 @@ textarea {
   font-size: 0.82rem;
 }
 
+.nearby-rag-citations {
+  display: grid;
+  gap: 7px;
+}
+
+.nearby-rag-citation {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid rgba(60, 64, 67, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.nearby-rag-citation strong,
+.nearby-rag-citation span {
+  color: #3c4043;
+  font-size: 0.78rem;
+}
+
+.nearby-rag-citation p {
+  color: #4f555a;
+  font-size: 0.82rem;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;

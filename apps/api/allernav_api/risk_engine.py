@@ -21,16 +21,35 @@ from .models import (
 )
 
 
-ALLERGEN_TERMS: dict[AllergyTag, tuple[str, ...]] = {
+ENGLISH_ALLERGEN_TERMS: dict[AllergyTag, tuple[str, ...]] = {
     AllergyTag.DAIRY: ("cream", "cheese", "butter", "yogurt", "whey", "milk", "parmesan"),
     AllergyTag.WHEAT_GLUTEN: ("wheat", "flour", "pasta", "bread", "soy sauce", "gluten"),
     AllergyTag.TREE_NUT: ("almond", "walnut", "cashew", "pistachio", "hazelnut", "pecan", "pesto"),
     AllergyTag.PEANUT: ("peanut", "peanut oil", "satay"),
-    AllergyTag.SESAME: ("sesame", "tahini"),
+    AllergyTag.SESAME: ("sesame", "tahini", "zaatar", "za'atar"),
     AllergyTag.SOY: ("soy", "tofu", "edamame", "soy sauce"),
     AllergyTag.EGG: ("egg", "mayo", "aioli"),
     AllergyTag.FISH: ("anchovy", "tuna", "salmon", "cod", "fish"),
     AllergyTag.SHELLFISH: ("shrimp", "crab", "lobster", "scallop", "prawn", "shellfish"),
+}
+
+
+ARABIC_ALLERGEN_TERMS: dict[AllergyTag, tuple[str, ...]] = {
+    AllergyTag.DAIRY: ("حليب", "لبن", "جبن", "زبدة", "كريمة"),
+    AllergyTag.WHEAT_GLUTEN: ("قمح", "دقيق", "طحين", "خبز", "غلوتين"),
+    AllergyTag.TREE_NUT: ("لوز", "جوز", "كاجو", "فستق", "بندق"),
+    AllergyTag.PEANUT: ("فول سوداني", "زبدة الفول السوداني"),
+    AllergyTag.SESAME: ("سمسم", "طحينة", "زعتر"),
+    AllergyTag.SOY: ("صويا", "صلصة الصويا", "توفو"),
+    AllergyTag.EGG: ("بيض", "مايونيز"),
+    AllergyTag.FISH: ("سمك", "تونة", "سلمون", "أنشوجة"),
+    AllergyTag.SHELLFISH: ("روبيان", "جمبري", "سلطعون", "كابوريا", "محار"),
+}
+
+
+ALLERGEN_TERMS: dict[AllergyTag, tuple[str, ...]] = {
+    allergen: ENGLISH_ALLERGEN_TERMS[allergen] + ARABIC_ALLERGEN_TERMS.get(allergen, ())
+    for allergen in ENGLISH_ALLERGEN_TERMS
 }
 
 PROMPT_INJECTION_PATTERNS = (

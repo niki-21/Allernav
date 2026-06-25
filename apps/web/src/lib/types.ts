@@ -272,6 +272,8 @@ export interface HybridSearchResult {
   source_timestamp?: string | null;
   confidence: number;
   raw_text: string;
+  citation_label: string;
+  citation_text: string;
   matched_allergens: AllergyTag[];
   retrieval_mode: "keyword" | "hybrid" | "vector" | string;
   can_support_low_risk: boolean;

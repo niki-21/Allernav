@@ -105,6 +105,17 @@ def build_hybrid_query(payload: HybridSearchRequest) -> dict[str, Any]:
 
     return body
 
+
+def retrieval_mode_from_query(body: dict[str, Any]) -> str:
+    search_text = str(body.get("search") or "").strip()
+    has_vector = bool(body.get("vectorQueries"))
+    if has_vector and search_text:
+        return "hybrid"
+    if has_vector:
+        return "vector"
+    return "keyword"
+
+
 def build_keyword_query(query: str, allergens: list[AllergyTag]) -> str:
     allergen_terms = [term for allergen in allergens for term in ALLERGEN_TERMS[allergen]]
     pieces = [query.strip(), *allergen_terms]
@@ -193,13 +204,15 @@ class AzureSearchClient:
 
     def hybrid_search(self, payload: HybridSearchRequest) -> HybridSearchResponse:
         url = f"{self.endpoint}/indexes/{self.index_name}/docs/search?api-version={search_api_version()}"
-        response = self._request_json(url, "POST", build_hybrid_query(payload))
+        query_body = build_hybrid_query(payload)
+        retrieval_mode = retrieval_mode_from_query(query_body)
+        response = self._request_json(url, "POST", query_body)
         values = response.get("value") if isinstance(response, dict) else []
         results = [
             document_to_result(
                 document,
                 [allergen for allergen in detect_allergens_in_text(str(document.get("raw_text", ""))) if not payload.allergens or allergen in payload.allergens],
-                "hybrid" if payload.vector else "keyword",
+                retrieval_mode,
             )
             for document in values
             if isinstance(document, dict)
@@ -224,17 +237,22 @@ def document_to_result(document: dict[str, Any], matched_allergens: list[Allergy
         source_type = SourceType(str(document.get("source_type") or SourceType.UNKNOWN.value))
     except ValueError:
         source_type = SourceType.UNKNOWN
+    raw_text = str(document.get("raw_text") or "")
+    dish_name = optional_string(document.get("dish_name"))
+    menu_section = optional_string(document.get("menu_section"))
     return HybridSearchResult(
         id=str(document.get("id")),
         restaurant_id=str(document.get("restaurant_id")),
         restaurant_name=optional_string(document.get("restaurant_name")),
-        dish_name=optional_string(document.get("dish_name")),
-        menu_section=optional_string(document.get("menu_section")),
+        dish_name=dish_name,
+        menu_section=menu_section,
         source_type=source_type,
         source_url=optional_string(document.get("source_url")),
         source_timestamp=optional_string(document.get("source_timestamp")),
         confidence=float(document.get("confidence") or 0.5),
-        raw_text=str(document.get("raw_text") or ""),
+        raw_text=raw_text,
+        citation_label=build_citation_label(source_type, menu_section, dish_name),
+        citation_text=build_citation_text(raw_text),
         matched_allergens=matched_allergens,
         retrieval_mode=retrieval_mode,
         can_support_low_risk=retrieval_mode not in {"vector", "semantic"} and source_type != SourceType.REVIEW,
@@ -260,6 +278,21 @@ def detect_allergens_in_text(text: str) -> list[AllergyTag]:
         for allergen, terms in ALLERGEN_TERMS.items()
         if any(term_matches(lowered, term) for term in terms)
     ]
+
+
+def build_citation_label(source_type: SourceType, menu_section: str | None, dish_name: str | None) -> str:
+    source_label = source_type.value.replace("_", " ")
+    pieces = [piece for piece in (menu_section, dish_name) if piece]
+    if pieces:
+        return f"{source_label}: {' / '.join(pieces)}"
+    return source_label
+
+
+def build_citation_text(raw_text: str, limit: int = 220) -> str:
+    normalized = " ".join(raw_text.split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 1].rstrip()}..."
 
 
 def freshness_adjusted_confidence(source_timestamp: str | None, base_confidence: float | None) -> float:

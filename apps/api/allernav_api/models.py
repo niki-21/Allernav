@@ -314,6 +314,8 @@ class HybridSearchResult(BaseModel):
     source_timestamp: str | None = None
     confidence: float = Field(default=0.5, ge=0, le=1)
     raw_text: str
+    citation_label: str
+    citation_text: str
     matched_allergens: list[AllergyTag] = Field(default_factory=list)
     retrieval_mode: str = "hybrid"
     can_support_low_risk: bool = False

@@ -5,13 +5,16 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from allernav_api.azure_search import (
+    AzureSearchClient,
     build_hybrid_query,
     build_index_documents,
     detect_allergens_in_text,
     freshness_adjusted_confidence,
     hybrid_search_menu,
+    retrieval_mode_from_query,
 )
 from allernav_api.menu_ingestion import save_menu_source
 from allernav_api.models import AllergyTag, HybridSearchRequest, MenuItem, MenuSection, MenuSource, SourceType
@@ -82,6 +85,50 @@ class AzureSearchTests(unittest.TestCase):
         self.assertIn("restaurant_id eq 'alpha'", query["filter"])
         self.assertIn("source_type eq 'official_menu'", query["filter"])
         self.assertEqual(query["vectorQueries"][0]["fields"], "embedding")
+        self.assertEqual(retrieval_mode_from_query(query), "hybrid")
+
+    def test_hybrid_query_auto_embeds_and_reports_hybrid_mode(self) -> None:
+        os.environ["AZURE_OPENAI_ENDPOINT"] = "https://example.openai.azure.com"
+        os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
+        os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "text-embedding-3-small"
+
+        with patch("allernav_api.azure_search.AzureOpenAIEmbeddingClient.embed_text", return_value=[0.1, 0.2]):
+            query = build_hybrid_query(HybridSearchRequest(query="sesame tahini", top=2))
+
+        self.assertIn("vectorQueries", query)
+        self.assertEqual(retrieval_mode_from_query(query), "hybrid")
+
+    def test_azure_results_report_hybrid_when_vector_is_generated_internally(self) -> None:
+        os.environ["AZURE_OPENAI_ENDPOINT"] = "https://example.openai.azure.com"
+        os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
+        os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "text-embedding-3-small"
+
+        with (
+            patch("allernav_api.azure_search.AzureOpenAIEmbeddingClient.embed_text", return_value=[0.1, 0.2]),
+            patch.object(
+                AzureSearchClient,
+                "_request_json",
+                return_value={
+                    "value": [
+                        {
+                            "id": "doc-1",
+                            "restaurant_id": "alpha",
+                            "dish_name": "Tahini Bowl",
+                            "source_type": "official_menu",
+                            "raw_text": "Tahini Bowl: rice, tahini, tomato",
+                        }
+                    ]
+                },
+            ),
+        ):
+            response = AzureSearchClient(
+                endpoint="https://example.search.windows.net",
+                api_key="key",
+                index_name="idx",
+            ).hybrid_search(HybridSearchRequest(query="sesame option"))
+
+        self.assertEqual(response.results[0].retrieval_mode, "hybrid")
+        self.assertIn("Tahini Bowl", response.results[0].citation_label)
 
     def test_local_vector_only_result_cannot_support_low_risk(self) -> None:
         save_menu_source(

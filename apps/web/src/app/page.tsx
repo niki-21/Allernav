@@ -475,6 +475,17 @@ export default function Home() {
                   Retrieval: {nearbyAnswer.retrieval_mode.replaceAll("_", " ")} · {nearbyAnswer.evidence.length} cited
                   fragments
                 </small>
+                {nearbyAnswer.evidence.length > 0 && (
+                  <div className="nearby-rag-citations">
+                    {nearbyAnswer.evidence.slice(0, 3).map((item, index) => (
+                      <article key={item.id} className="nearby-rag-citation">
+                        <strong>[E{index + 1}] {item.citation_label}</strong>
+                        <p>{item.citation_text}</p>
+                        <span>{item.retrieval_mode} · {Math.round(item.confidence * 100)}% confidence</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </section>

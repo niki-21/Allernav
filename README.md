@@ -197,7 +197,22 @@ AZURE_SEARCH_API_KEY=
 AZURE_SEARCH_INDEX_NAME=allernav-menu-evidence
 ```
 
+Create or update the Azure AI Search index from the checked-in schema:
+
+```bash
+cd apps/api
+PYTHONPATH=. python3 scripts/setup_azure_search_index.py
+```
+
+The index schema lives at `apps/api/azure_search_index.json`. It is configured for 1536-dimensional embeddings, matching `text-embedding-3-small`.
+
 The deterministic allergen engine remains the safety authority. Hybrid/vector retrieval can surface evidence, but it does not decide that a dish is lower risk.
+
+Live Azure smoke tests are opt-in so normal unit tests never call paid cloud APIs:
+
+```bash
+ALLERNAV_LIVE_CLOUD_TESTS=true PYTHONPATH=apps/api python3 -m pytest apps/api/tests/test_live_azure_smoke.py
+```
 
 ## LangSmith Tracing
 
