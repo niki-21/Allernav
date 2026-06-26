@@ -259,6 +259,8 @@ def generate_gemini_answer(
             "Use menu evidence as stronger evidence than reviews.",
             "Cite evidence ids like [E1] when discussing menu facts.",
             "Do not invent menu items, ingredients, policies, or reviews.",
+            "If no menu evidence was retrieved, say menu refresh or OCR is needed before ranking candidates.",
+            "Do not list internal confidence percentages or item counts unless they directly explain an evidence gap.",
         ],
         "question": payload.question,
         "selected_allergens": [allergen.value for allergen in payload.allergens],
@@ -287,7 +289,7 @@ def generate_gemini_answer(
         ],
         "missing_information": missing_information,
         "recommended_questions": questions,
-        "output": "One short paragraph plus 2-3 concise bullets. No JSON.",
+        "output": "Maximum 80 words. One short paragraph and, only when useful, up to 2 concise bullets. No JSON.",
     }
     req = request.Request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -363,17 +365,26 @@ def deterministic_answer(
         )
 
     allergen_text = ", ".join(allergen.value.replace("_", " ") for allergen in payload.allergens) or "your allergens"
-    lines = [
-        f"For {allergen_text}, start with these places as verification candidates rather than safe choices:",
-    ]
-    for suggestion in suggestions:
-        evidence_count = len(suggestion.evidence)
-        lines.append(
-            f"- {suggestion.place.name}: {suggestion.menu_item_count} stored menu items, "
-            f"{evidence_count} retrieved evidence fragment{'s' if evidence_count != 1 else ''}, "
-            f"{round(suggestion.confidence * 100)}% confidence. {suggestion.risk_note}"
+    place_names = ", ".join(suggestion.place.name for suggestion in suggestions[:3])
+    has_menu_evidence = any(suggestion.menu_item_count > 0 or suggestion.evidence for suggestion in suggestions)
+    if not has_menu_evidence:
+        return (
+            f"I found nearby {allergen_text} verification candidates, but none have stored menu evidence yet: "
+            f"{place_names}. Open a place and refresh its menu or OCR source before treating it as a useful allergy lead. "
+            f"Ask staff: {questions[0]}"
         )
+
+    lines = [f"For {allergen_text}, use these as verification leads, not safe choices:"]
+    for suggestion in suggestions[:3]:
+        evidence_count = len(suggestion.evidence)
+        if evidence_count > 0:
+            evidence_text = f"{evidence_count} cited menu fragment{'s' if evidence_count != 1 else ''}"
+        elif suggestion.menu_item_count > 0:
+            evidence_text = "stored menu items, but weak retrieval for this question"
+        else:
+            evidence_text = "no stored menu evidence yet"
+        lines.append(f"- {suggestion.place.name}: {evidence_text}. {suggestion.risk_note}")
     if missing_information:
-        lines.append("Missing information: " + " ".join(missing_information))
+        lines.append("Gap: " + missing_information[0])
     lines.append("Ask staff: " + questions[0])
     return "\n".join(lines)

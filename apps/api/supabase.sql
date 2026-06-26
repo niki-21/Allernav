@@ -31,3 +31,6 @@ create table if not exists public.menu_documents (
 
 create index if not exists menu_documents_restaurant_id_idx
   on public.menu_documents (restaurant_id);
+
+create unique index if not exists menu_documents_restaurant_url_idx
+  on public.menu_documents (restaurant_id, document_url);

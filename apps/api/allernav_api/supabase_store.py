@@ -60,6 +60,36 @@ def save_menu_source(
         },
         query={"on_conflict": "restaurant_id"},
     )
+    if response is None:
+        return False
+    if source.document_url:
+        save_menu_document(config=config, restaurant_id=restaurant_id, source=source)
+    return True
+
+
+def save_menu_document(*, config: SupabaseConfig, restaurant_id: str, source: MenuSource) -> bool:
+    if not source.document_url:
+        return False
+    payload = {
+        "restaurant_id": restaurant_id,
+        "document_url": source.document_url,
+        "content_type": source.content_type,
+        "extraction_method": source.extraction_method,
+        "page_count": source.page_count,
+        "extraction_confidence": source.extraction_confidence,
+        "raw_text": source.raw_text,
+    }
+    response = _request(
+        config,
+        "/rest/v1/menu_documents",
+        method="POST",
+        body=[payload],
+        headers={
+            "Prefer": "resolution=merge-duplicates",
+            "Content-Type": "application/json",
+        },
+        query={"on_conflict": "restaurant_id,document_url"},
+    )
     return response is not None
 
 

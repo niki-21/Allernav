@@ -320,6 +320,11 @@ def load_place_menu(restaurant_id: str, db_path: Path | None = None) -> PlaceMen
         source_url=source.source_url,
         source_fetched_at=source.source_timestamp,
         status="complete",
+        content_type=source.content_type,
+        document_url=source.document_url,
+        extraction_method=source.extraction_method,
+        page_count=source.page_count,
+        extraction_confidence=source.extraction_confidence,
         sections=source.sections,
     )
 

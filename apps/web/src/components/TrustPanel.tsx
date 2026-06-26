@@ -58,6 +58,16 @@ function displayHostName(url: string): string {
   }
 }
 
+function formatExtractionMethod(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  if (value.includes("azure_document_intelligence")) {
+    return "Azure Document Intelligence OCR";
+  }
+  return value.replace(/_/g, " ");
+}
+
 export default function TrustPanel({
   place,
   detailState,
@@ -131,9 +141,19 @@ export default function TrustPanel({
     : "Showing the review snippets returned by the current place details source.";
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
   const agentRecommendation = data.agent_recommendation ?? null;
+  const agentDishResults = agentRecommendation?.dish_results ?? [];
+  const hasAgentDishEvidence = agentDishResults.length > 0;
   const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
   const openStatus = formatOpenStatus(data);
   const services = serviceLabels(data.service_options);
+  const extractionMethod = formatExtractionMethod(data.menu?.extraction_method);
+  const extractionConfidence =
+    typeof data.menu?.extraction_confidence === "number"
+      ? `${Math.round(data.menu.extraction_confidence * 100)}% extraction confidence`
+      : null;
+  const menuEvidenceLine = [extractionMethod, extractionConfidence, data.menu?.page_count ? `${data.menu.page_count} page${data.menu.page_count === 1 ? "" : "s"}` : null]
+    .filter(Boolean)
+    .join(" · ");
   const ratingLine = [
     data.rating ? `${data.rating.toFixed(1)} on Google` : null,
     data.user_rating_count ? `${data.user_rating_count.toLocaleString()} reviews` : null,
@@ -229,11 +249,14 @@ export default function TrustPanel({
               <p>
                 {menuItemCount > 0
                   ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                  : hasAgentDishEvidence
+                  ? `${agentDishResults.length} agent dish result${agentDishResults.length === 1 ? "" : "s"} found, but the structured menu view is still being normalized.`
                   : "No reliable dish-level menu found yet."}
               </p>
+              {menuEvidenceLine && <p className="muted-line">{menuEvidenceLine}</p>}
             </div>
-            {data.menu?.source_url && (
-              <a className="source-link" href={data.menu.source_url} target="_blank" rel="noreferrer">
+            {(data.menu?.source_url || data.menu?.document_url) && (
+              <a className="source-link" href={data.menu.source_url ?? data.menu.document_url ?? ""} target="_blank" rel="noreferrer">
                 Source
               </a>
             )}
@@ -296,6 +319,19 @@ export default function TrustPanel({
                 </section>
               ))}
             </div>
+          ) : hasAgentDishEvidence ? (
+            <article className="empty-menu-state">
+              <strong>Dish evidence found by agent analysis</strong>
+              <p>
+                The structured menu panel is not populated yet, but AllerNav found dish-level evidence through the
+                agentic safety check. Treat these as verification targets, not confirmed lower-risk dishes.
+              </p>
+              {data.website_uri && (
+                <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
+                  Restaurant website
+                </a>
+              )}
+            </article>
           ) : (
             <article className="empty-menu-state">
               <strong>No reliable dish-level menu found</strong>
@@ -311,10 +347,10 @@ export default function TrustPanel({
             </article>
           )}
 
-          {agentRecommendation && agentRecommendation.dish_results.length > 0 && (
+          {agentRecommendation && hasAgentDishEvidence && (
             <div className="menu-section-list compact-recommendations">
-              <strong>Agent dish risk</strong>
-              {agentRecommendation.dish_results.slice(0, 3).map((item) => (
+              <strong>Agent dish evidence</strong>
+              {agentDishResults.slice(0, 3).map((item) => (
                 <article key={`${item.dish}-${item.risk_level}`} className="menu-list-item">
                   <strong>{item.dish}</strong>
                   <p>

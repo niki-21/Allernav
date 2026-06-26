@@ -19,6 +19,11 @@ type BackendPlaceMenu = {
   source_url?: unknown;
   source_fetched_at?: unknown;
   status?: unknown;
+  content_type?: unknown;
+  document_url?: unknown;
+  extraction_method?: unknown;
+  page_count?: unknown;
+  extraction_confidence?: unknown;
   sections?: unknown;
 };
 
@@ -81,6 +86,10 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function allergenArray(value: unknown): PlaceMenu["sections"][number]["items"][number]["likely_risky_for"] {
   return stringArray(value) as PlaceMenu["sections"][number]["items"][number]["likely_risky_for"];
 }
@@ -135,6 +144,13 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
 
   return {
     source_url: stringValue(menu.source_url),
+    source_fetched_at: stringValue(menu.source_fetched_at),
+    status: stringValue(menu.status),
+    content_type: stringValue(menu.content_type),
+    document_url: stringValue(menu.document_url),
+    extraction_method: stringValue(menu.extraction_method),
+    page_count: numberValue(menu.page_count),
+    extraction_confidence: numberValue(menu.extraction_confidence),
     sections,
   };
 }

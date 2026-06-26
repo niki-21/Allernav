@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { getPlaceDetailsService, searchPlacesService } from "../service.ts";
 import { normalizeApifyReviews } from "../apifyReviews.ts";
+import { normalizeBackendMenu } from "../fastapi.ts";
 
 const fakeClient = {
   async searchPlaces(_query: string, center: { lat: number; lng: number }) {
@@ -142,6 +143,30 @@ test("normalizeApifyReviews maps Apify review data", () => {
   assert.equal(reviews[0]?.author_name, "Pat");
   assert.equal(reviews[0]?.rating, 2);
   assert.match(reviews[0]?.text ?? "", /sesame/);
+});
+
+test("normalizeBackendMenu preserves OCR extraction metadata", () => {
+  const menu = normalizeBackendMenu({
+    source_url: "https://example.com/menu.pdf",
+    source_fetched_at: "2026-06-26T00:00:00Z",
+    status: "complete",
+    content_type: "application/pdf",
+    document_url: "https://example.com/menu.pdf",
+    extraction_method: "azure_document_intelligence_read",
+    page_count: 2,
+    extraction_confidence: 0.91,
+    sections: [
+      {
+        title: "Crepes",
+        items: [{ name: "Normandie Crepe", description: "Apples and cream" }],
+      },
+    ],
+  });
+
+  assert.equal(menu?.source_url, "https://example.com/menu.pdf");
+  assert.equal(menu?.extraction_method, "azure_document_intelligence_read");
+  assert.equal(menu?.page_count, 2);
+  assert.equal(menu?.extraction_confidence, 0.91);
 });
 
 test("getPlaceDetailsService defers Apify reviews even when configured", async () => {

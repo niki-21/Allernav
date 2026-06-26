@@ -175,6 +175,11 @@ class PlaceMenu(BaseModel):
     source_url: str | None = None
     source_fetched_at: str | None = None
     status: str = "missing"
+    content_type: str | None = None
+    document_url: str | None = None
+    extraction_method: str | None = None
+    page_count: int | None = Field(default=None, ge=0)
+    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
     sections: list[MenuSection] = Field(default_factory=list)
 
 

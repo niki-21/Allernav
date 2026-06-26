@@ -121,6 +121,13 @@ export interface MenuSection {
 
 export interface PlaceMenu {
   source_url?: string | null;
+  source_fetched_at?: string | null;
+  status?: string | null;
+  content_type?: string | null;
+  document_url?: string | null;
+  extraction_method?: string | null;
+  page_count?: number | null;
+  extraction_confidence?: number | null;
   sections: MenuSection[];
 }
 
