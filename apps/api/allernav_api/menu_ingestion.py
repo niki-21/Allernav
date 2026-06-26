@@ -21,6 +21,7 @@ from .document_intelligence import (
 )
 from .models import EvidenceFragment, MenuItem, MenuSection, MenuSource, PlaceMenu, SourceType
 from .risk_engine import is_prompt_injection, parse_raw_menu_text
+from .web_menu_discovery import discover_web_menu_candidates
 
 
 FetchHtml = Callable[[str], str | None]
@@ -357,6 +358,7 @@ def ingest_menu_from_website(
     restaurant_id: str,
     restaurant_name: str | None,
     website_url: str,
+    restaurant_address: str | None = None,
     fetch_html: FetchHtml | None = None,
     extract_document: ExtractDocument | None = None,
     db_path: Path | None = None,
@@ -404,6 +406,35 @@ def ingest_menu_from_website(
         return rendered_link_source
     if rendered_link_source:
         last_source = rendered_link_source
+
+    web_candidate_urls = [
+        candidate.url
+        for candidate in discover_web_menu_candidates(
+            restaurant_name=restaurant_name,
+            website_url=website_url,
+            address=restaurant_address,
+        )
+        if candidate.url not in [*static_candidate_urls, *rendered_candidate_urls]
+    ]
+    web_source = ingest_first_matching_source(
+        candidate_urls=web_candidate_urls,
+        fetcher=fetcher,
+        document_extractor=document_extractor,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+    )
+    if web_source and web_source.sections:
+        source = web_source.model_copy(update={"extraction_method": web_source.extraction_method or "web_menu_search"})
+        save_menu_source(
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant_name,
+            source=source,
+            db_path=db_path,
+        )
+        return source
+    if web_source:
+        last_source = web_source
 
     failed_source = last_source or MenuSource(
         source_type=SourceType.RESTAURANT_WEBSITE,

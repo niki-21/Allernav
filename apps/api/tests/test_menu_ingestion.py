@@ -417,6 +417,37 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.page_count, 2)
         self.assertEqual(source.sections[0].items[0].name, "Tuna Roll")
 
+    def test_web_search_candidates_are_used_after_site_discovery_fails(self) -> None:
+        with patch(
+            "allernav_api.menu_ingestion.discover_web_menu_candidates",
+            return_value=[
+                type("Candidate", (), {"url": "https://cdn.example.com/menu-photo.jpg"})(),
+            ],
+        ):
+            source = ingest_menu_from_website(
+                restaurant_id="web-search-place",
+                restaurant_name="Web Search Place",
+                website_url="https://restaurant.example/",
+                restaurant_address="Brooklyn, NY",
+                fetch_html=lambda _url: None,
+                extract_document=lambda url: (
+                    DocumentExtraction(
+                        content="Normandie Crepe - apples, cream\nPaysan Crepe - ham, cheese",
+                        content_type="image/jpeg",
+                        extraction_method="azure_document_intelligence",
+                        page_count=1,
+                        confidence=0.79,
+                    )
+                    if url == "https://cdn.example.com/menu-photo.jpg"
+                    else None
+                ),
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(source.document_url, "https://cdn.example.com/menu-photo.jpg")
+        self.assertEqual(source.content_type, "image/jpeg")
+        self.assertEqual(source.sections[0].items[0].name, "Normandie Crepe")
+
     def test_image_ocr_menu_preserves_low_confidence_metadata(self) -> None:
         source = parse_menu_document(
             "https://restaurant.example/menu.jpg",

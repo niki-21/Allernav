@@ -412,6 +412,8 @@ class MenuRefreshJob(BaseModel):
     source_url: str | None = None
     content_type: str | None = None
     extraction_method: str | None = None
+    page_count: int | None = None
+    extraction_confidence: float | None = None
     created_at: str
     completed_at: str | None = None
 

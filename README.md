@@ -159,6 +159,22 @@ AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=
 AZURE_DOCUMENT_INTELLIGENCE_KEY=
 ```
 
+Menu refresh uses a layered discovery flow:
+
+- static restaurant website links, sitemaps, and common `/menu` paths
+- rendered website browsing through Apify Playwright when `APIFY_TOKEN` is set
+- optional web search discovery through Google Programmable Search or SerpAPI when the website does not expose a menu directly
+- Azure Document Intelligence OCR for discovered PDFs and menu images
+
+Set one of these optional web search providers in `apps/api/.env` to let refresh find public menu PDFs/photos beyond the restaurant homepage:
+
+```bash
+GOOGLE_SEARCH_API_KEY=
+GOOGLE_SEARCH_ENGINE_ID=
+# or
+SERPAPI_API_KEY=
+```
+
 By default the SQLite database is created at:
 
 ```text

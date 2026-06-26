@@ -189,6 +189,7 @@ async def create_menu_refresh_job(
     now = datetime.now(UTC).isoformat()
     resolved_name = restaurant_name
     resolved_url = website_url
+    place = {}
 
     if not resolved_url and client is not None:
         place = client.get_place_details(place_id)
@@ -211,6 +212,7 @@ async def create_menu_refresh_job(
         restaurant_id=place_id,
         restaurant_name=resolved_name,
         website_url=resolved_url,
+        restaurant_address=place.get("address"),
     )
     item_count = sum(len(section.items) for section in source.sections)
     status = "complete" if item_count else "failed"
@@ -231,6 +233,8 @@ async def create_menu_refresh_job(
         source_url=source.source_url,
         content_type=source.content_type,
         extraction_method=source.extraction_method,
+        page_count=source.page_count,
+        extraction_confidence=source.extraction_confidence,
         created_at=now,
         completed_at=datetime.now(UTC).isoformat(),
     )

@@ -148,6 +148,8 @@ export interface MenuRefreshJob {
   source_url?: string | null;
   content_type?: string | null;
   extraction_method?: string | null;
+  page_count?: number | null;
+  extraction_confidence?: number | null;
   created_at: string;
   completed_at?: string | null;
 }
