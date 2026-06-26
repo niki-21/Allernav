@@ -5,9 +5,9 @@ import { buildFastApiUrl } from "../../../../server/fastapi.ts";
 export const runtime = "nodejs";
 
 function timeoutMs(): number {
-  const parsed = Number(process.env.FASTAPI_RAG_TIMEOUT_MS ?? "20000");
+  const parsed = Number(process.env.FASTAPI_RAG_TIMEOUT_MS ?? "30000");
   if (!Number.isFinite(parsed)) {
-    return 20000;
+    return 30000;
   }
   return Math.max(1000, Math.min(30_000, Math.trunc(parsed)));
 }

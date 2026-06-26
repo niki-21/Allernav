@@ -33,15 +33,47 @@ export function buildNearbySuggestionPayload(
   allergens: AllergyTag[],
   candidatePlaceIds: string[],
 ) {
+  const useVisibleCandidates = shouldUseVisibleCandidates(question);
+  const candidates = useVisibleCandidates ? candidatePlaceIds : [];
   return {
     question,
     query: question,
     center,
     allergens,
-    candidate_place_ids: candidatePlaceIds,
-    max_places: Math.min(8, Math.max(1, candidatePlaceIds.length || 6)),
+    candidate_place_ids: candidates,
+    max_places: Math.min(8, Math.max(1, candidates.length || 6)),
     top_evidence: 3,
   };
+}
+
+export function shouldUseVisibleCandidates(question: string): boolean {
+  const text = question.toLowerCase();
+  const freshSearchTerms = [
+    "bagel",
+    "bakery",
+    "breakfast",
+    "brunch",
+    "burger",
+    "cafe",
+    "chinese",
+    "deli",
+    "ethiopian",
+    "french",
+    "gluten free",
+    "indian",
+    "italian",
+    "japanese",
+    "korean",
+    "mediterranean",
+    "mexican",
+    "pizza",
+    "ramen",
+    "sushi",
+    "thai",
+    "vegan",
+    "vegetarian",
+  ];
+  return !freshSearchTerms.some((term) => text.includes(term));
 }
 
 export function buildPlaceDetailsUrl(placeId: string, allergens: AllergyTag[]): string {

@@ -45,6 +45,7 @@ export default function Home() {
   const [nearbyAnswer, setNearbyAnswer] = useState<NearbySuggestionResponse | null>(null);
   const [nearbyAskState, setNearbyAskState] = useState<"idle" | "loading" | "error">("idle");
   const [nearbyAskError, setNearbyAskError] = useState<string | null>(null);
+  const [menuLoadingPlaceIds, setMenuLoadingPlaceIds] = useState<Set<string>>(() => new Set());
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
   const requestSequence = useRef(0);
@@ -204,6 +205,7 @@ export default function Home() {
 
     if (!details.menu && details.website_uri && !menuRefreshAttempts.current.has(details.id)) {
       menuRefreshAttempts.current.add(details.id);
+      setMenuLoadingPlaceIds((current) => new Set(current).add(details.id));
       void (async () => {
         try {
           await refreshPlaceMenu(details.id, {
@@ -224,6 +226,12 @@ export default function Home() {
         } catch {
           // Menu ingestion is best-effort. Keep the already-loaded place details visible.
           setDetailStates((current) => ({ ...current }));
+        } finally {
+          setMenuLoadingPlaceIds((current) => {
+            const next = new Set(current);
+            next.delete(details.id);
+            return next;
+          });
         }
       })();
       return;
@@ -520,6 +528,7 @@ export default function Home() {
             detailState={selectedPlaceId ? detailStates[selectedPlaceId] : undefined}
             askResponse={selectedPlaceId ? askResponses[selectedPlaceId] : null}
             isAskingRestaurant={askingPlaceId === selectedPlaceId}
+            isMenuLoading={selectedPlaceId ? menuLoadingPlaceIds.has(selectedPlaceId) : false}
             onAskRestaurant={askAboutSelectedPlace}
             onRetry={() => {
               if (!selectedPlaceId) {

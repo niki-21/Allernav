@@ -95,6 +95,8 @@ def restaurant_search_query(question: str, fallback: str = "") -> str:
         "deli",
         "dinner",
         "gluten free",
+        "ethiopian",
+        "french",
         "indian",
         "italian",
         "japanese",
@@ -114,6 +116,9 @@ def restaurant_search_query(question: str, fallback: str = "") -> str:
     matched = [term for term in cuisine_terms if term in text]
     if not matched:
         return "restaurants"
+    cuisine_matches = [term for term in matched if term != "restaurant"]
+    if cuisine_matches:
+        return f"{cuisine_matches[0]} restaurants"
     if "restaurant" in matched or "restaurants" in text:
         return "restaurants"
     return f"{matched[0]} restaurants"

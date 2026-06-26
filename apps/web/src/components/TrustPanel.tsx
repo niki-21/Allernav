@@ -11,6 +11,7 @@ interface TrustPanelProps {
   onAskRestaurant: () => void;
   askResponse?: AskRestaurantResponse | null;
   isAskingRestaurant?: boolean;
+  isMenuLoading?: boolean;
 }
 
 type PlaceTab = "overview" | "menu" | "reviews" | "about";
@@ -64,6 +65,7 @@ export default function TrustPanel({
   onAskRestaurant,
   askResponse,
   isAskingRestaurant = false,
+  isMenuLoading = false,
 }: TrustPanelProps) {
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
@@ -256,7 +258,15 @@ export default function TrustPanel({
             </div>
           )}
 
-          {menuSections.length > 0 ? (
+          {isMenuLoading && menuSections.length === 0 ? (
+            <div className="menu-loading-state">
+              <strong>Loading menu evidence</strong>
+              <p>AllerNav is checking the restaurant website and linked menu documents.</p>
+              <div className="skeleton skeleton-line" />
+              <div className="skeleton skeleton-line" />
+              <div className="skeleton skeleton-review" />
+            </div>
+          ) : menuSections.length > 0 ? (
             <div className="menu-section-list google-menu-list">
               {menuSections.slice(0, 3).map((section) => (
                 <section key={section.title} className="menu-list-section">

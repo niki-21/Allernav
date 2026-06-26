@@ -6,6 +6,7 @@ import {
   buildNearbySuggestionPayload,
   buildPlaceDetailsUrl,
   buildSearchPayload,
+  shouldUseVisibleCandidates,
 } from "../api.ts";
 
 test("buildSearchPayload keeps query, center, and allergens aligned", () => {
@@ -57,4 +58,26 @@ test("buildNearbySuggestionPayload includes current map candidates", () => {
       top_evidence: 3,
     },
   );
+});
+
+test("buildNearbySuggestionPayload starts fresh search for cuisine prompts", () => {
+  assert.deepEqual(
+    buildNearbySuggestionPayload(
+      "I want a french restaurant",
+      { lat: 40, lng: -73 },
+      ["sesame"],
+      ["place-a", "place-b"],
+    ),
+    {
+      question: "I want a french restaurant",
+      query: "I want a french restaurant",
+      center: { lat: 40, lng: -73 },
+      allergens: ["sesame"],
+      candidate_place_ids: [],
+      max_places: 6,
+      top_evidence: 3,
+    },
+  );
+  assert.equal(shouldUseVisibleCandidates("Which visible place looks better?"), true);
+  assert.equal(shouldUseVisibleCandidates("Find sushi nearby"), false);
 });

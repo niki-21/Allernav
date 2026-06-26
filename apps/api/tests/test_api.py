@@ -244,6 +244,7 @@ class ApiTests(unittest.TestCase):
     def test_nearby_rag_normalizes_broad_assistant_questions_to_restaurants(self) -> None:
         self.assertEqual(restaurant_search_query("Suggest nearby places here"), "restaurants")
         self.assertEqual(restaurant_search_query("Suggest sushi options nearby"), "sushi restaurants")
+        self.assertEqual(restaurant_search_query("I want a french restaurant"), "french restaurants")
 
 
 if __name__ == "__main__":
