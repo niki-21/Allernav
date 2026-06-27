@@ -1,9 +1,9 @@
 "use client";
 
-import { GoogleMap, InfoWindow, Marker, useJsApiLoader } from "@react-google-maps/api";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { GoogleMap, Marker, useJsApiLoader } from "@react-google-maps/api";
+import { useEffect, useMemo, useRef } from "react";
 
-import type { LatLng, PlaceDetailState, PlaceDetailsResponse, PlaceSummary } from "@/lib/types";
+import type { LatLng, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
 interface MapProps {
   places: PlaceSummary[];
@@ -51,10 +51,6 @@ function getMarkerColor(detailState?: PlaceDetailState): string {
   }
 }
 
-function getReadyData(detailState?: PlaceDetailState): PlaceDetailsResponse | null {
-  return detailState?.status === "ready" ? detailState.data : null;
-}
-
 export default function Map({
   places,
   details,
@@ -71,8 +67,6 @@ export default function Map({
     googleMapsApiKey: apiKey,
   });
   const mapRef = useRef<google.maps.Map | null>(null);
-  const [mapReady, setMapReady] = useState(false);
-  const [mapTilesLoaded, setMapTilesLoaded] = useState(false);
   const lastViewportCenter = useRef<string>("");
   const suppressedViewportPublishes = useRef(0);
 
@@ -137,7 +131,6 @@ export default function Map({
       zoom={14}
       onLoad={(instance) => {
         mapRef.current = instance;
-        setMapReady(true);
         instance.setOptions({
           disableDefaultUI: true,
           zoomControl: true,
@@ -151,10 +144,7 @@ export default function Map({
       }}
       onUnmount={() => {
         mapRef.current = null;
-        setMapReady(false);
-        setMapTilesLoaded(false);
       }}
-      onTilesLoaded={() => setMapTilesLoaded(true)}
       onClick={(event) => {
         const placeId = (event as google.maps.IconMouseEvent).placeId;
         if (!placeId) {
@@ -214,35 +204,7 @@ export default function Map({
               strokeColor: isSearchTarget ? "#1b7f62" : "#fffaf4",
               strokeWeight: isSearchTarget ? 4 : 2,
             }}
-          >
-            {isSelected && mapReady && mapTilesLoaded && (
-              <InfoWindow onCloseClick={() => onPlaceSelect(null)}>
-                <div className="map-info-window">
-                  {(() => {
-                    const readyData = getReadyData(details[place.id]);
-                    return (
-                      <>
-                        <strong>{readyData?.name ?? place.name}</strong>
-                        <p>{readyData?.address ?? place.address ?? "Address unavailable"}</p>
-                        {readyData ? (
-                          <a
-                            className="map-info-link"
-                            href={readyData.google_maps_uri}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            View on Google Maps
-                          </a>
-                        ) : (
-                          <span className="map-info-status">Loading details</span>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              </InfoWindow>
-            )}
-          </Marker>
+          />
         );
       })}
     </GoogleMap>
