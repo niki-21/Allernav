@@ -70,7 +70,7 @@ class AzureDocumentIntelligenceClient:
 
         analyze_url = (
             f"{self.endpoint}/documentintelligence/documentModels/prebuilt-layout:analyze"
-            f"?api-version={self.api_version}"
+            f"?api-version={self.api_version}&outputContentFormat=markdown"
         )
         payload = json.dumps({"urlSource": document_url}).encode("utf-8")
         operation_url = self._post_analyze(analyze_url, payload)

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,16 +13,22 @@ from typing import Any
 from urllib import error, parse, request
 
 from . import supabase_store
-from .apify_menu_discovery import ApifyMenuDiscoveryError, RenderedMenuDiscovery, discover_rendered_menu_evidence
+from .apify_menu_discovery import (
+    ApifyMenuDiscoveryError,
+    RenderedMenuDiscovery,
+    apify_menu_discovery_configured,
+    discover_rendered_menu_evidence,
+)
 from .document_intelligence import (
+    AzureDocumentIntelligenceClient,
     DocumentExtraction,
     document_content_type,
     extract_document_from_url,
     looks_like_document_url,
 )
-from .models import EvidenceFragment, MenuItem, MenuSection, MenuSource, PlaceMenu, SourceType
+from .models import EvidenceFragment, IngestionTraceStep, MenuItem, MenuSection, MenuSource, PlaceMenu, SourceType
 from .risk_engine import is_prompt_injection, parse_raw_menu_text
-from .web_menu_discovery import discover_web_menu_candidates
+from .web_menu_discovery import discover_web_menu_candidates, web_menu_discovery_configured
 
 
 FetchHtml = Callable[[str], str | None]
@@ -362,14 +369,31 @@ def ingest_menu_from_website(
     fetch_html: FetchHtml | None = None,
     extract_document: ExtractDocument | None = None,
     db_path: Path | None = None,
+    trace: list[IngestionTraceStep] | None = None,
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
+    started_at = time.monotonic()
     static_candidate_urls = discover_candidate_urls(
         website_url,
         fetcher,
         allow_rendered_discovery=False,
     )
+    append_trace_step(
+        trace,
+        step_id="source_discovery",
+        label="Discover menu sources",
+        status="complete" if static_candidate_urls else "failed",
+        detail=(
+            f"Found {len(static_candidate_urls)} website candidate URL{'s' if len(static_candidate_urls) != 1 else ''}."
+            if static_candidate_urls
+            else "The restaurant website did not produce any candidate menu URLs."
+        ),
+        provider="restaurant_website",
+        source_url=website_url,
+        started_at=started_at,
+    )
+    parse_started_at = time.monotonic()
     last_source: MenuSource | None = ingest_first_matching_source(
         candidate_urls=static_candidate_urls,
         fetcher=fetcher,
@@ -378,15 +402,83 @@ def ingest_menu_from_website(
         restaurant_name=restaurant_name,
         db_path=db_path,
     )
+    static_item_count = menu_source_item_count(last_source)
+    document_candidates = [url for url in static_candidate_urls if looks_like_document_url(url)]
+    append_trace_step(
+        trace,
+        step_id="static_extraction",
+        label="Parse website menu",
+        status="complete" if static_item_count else "failed",
+        detail=(
+            f"Extracted {static_item_count} dish-level item{'s' if static_item_count != 1 else ''} from static website content."
+            if static_item_count
+            else "Static HTML and structured data did not yield reliable dish-level items."
+        ),
+        provider="html_json_ld",
+        source_url=last_source.source_url if last_source else website_url,
+        item_count=static_item_count,
+        started_at=parse_started_at,
+    )
+    if document_candidates:
+        ocr_configured = AzureDocumentIntelligenceClient().configured or extract_document is not None
+        used_ocr = bool(last_source and last_source.extraction_method == "azure_document_intelligence")
+        append_trace_step(
+            trace,
+            step_id="document_ocr",
+            label="Read menu document",
+            status="complete" if used_ocr and static_item_count else ("failed" if ocr_configured else "skipped"),
+            detail=(
+                f"Azure Document Intelligence extracted {static_item_count} usable dish-level item{'s' if static_item_count != 1 else ''}."
+                if used_ocr and static_item_count
+                else (
+                    "A PDF or image candidate was found, but OCR returned no usable dish-level items. The source may block Azure URL access or the parser may have rejected the layout."
+                    if ocr_configured
+                    else "A PDF or image candidate was found, but Azure Document Intelligence is not configured on the API deployment."
+                )
+            ),
+            provider="azure_document_intelligence",
+            source_url=(last_source.document_url if last_source else None) or document_candidates[0],
+            item_count=static_item_count if used_ocr else 0,
+        )
+    else:
+        append_trace_step(
+            trace,
+            step_id="document_ocr",
+            label="Read menu document",
+            status="skipped",
+            detail="No PDF or image menu candidate was discovered on the restaurant website.",
+            provider="azure_document_intelligence",
+        )
     if last_source and last_source.sections:
         return last_source
 
+    rendered_started_at = time.monotonic()
     rendered_discovery = discover_rendered_menu_evidence_safely(website_url) if fetch_html is None else RenderedMenuDiscovery(urls=[], pages=[])
     rendered_source = ingest_rendered_menu_pages(
         rendered_discovery=rendered_discovery,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         db_path=db_path,
+    )
+    rendered_item_count = menu_source_item_count(rendered_source)
+    append_trace_step(
+        trace,
+        step_id="rendered_browser",
+        label="Inspect rendered website",
+        status="complete" if rendered_item_count else ("failed" if apify_menu_discovery_configured() else "skipped"),
+        detail=(
+            f"Rendered browsing extracted {rendered_item_count} dish-level item{'s' if rendered_item_count != 1 else ''}."
+            if rendered_item_count
+            else (
+                f"Rendered browsing found {len(rendered_discovery.pages)} menu-like page{'s' if len(rendered_discovery.pages) != 1 else ''} and {len(rendered_discovery.urls)} candidate link{'s' if len(rendered_discovery.urls) != 1 else ''}, but no usable dishes."
+                if apify_menu_discovery_configured()
+                else "Apify rendered menu discovery is not configured on the API deployment."
+            )
+        ),
+        provider="apify_playwright",
+        source_url=rendered_source.source_url,
+        item_count=rendered_item_count,
+        started_at=rendered_started_at,
     )
     if rendered_source.sections:
         return rendered_source
@@ -407,6 +499,7 @@ def ingest_menu_from_website(
     if rendered_link_source:
         last_source = rendered_link_source
 
+    search_started_at = time.monotonic()
     web_candidate_urls = [
         candidate.url
         for candidate in discover_web_menu_candidates(
@@ -423,6 +516,26 @@ def ingest_menu_from_website(
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         db_path=db_path,
+    )
+    web_item_count = menu_source_item_count(web_source)
+    append_trace_step(
+        trace,
+        step_id="web_search",
+        label="Search for external menu evidence",
+        status="complete" if web_item_count else ("failed" if web_menu_discovery_configured() else "skipped"),
+        detail=(
+            f"Web discovery found {len(web_candidate_urls)} candidate URL{'s' if len(web_candidate_urls) != 1 else ''} and extracted {web_item_count} dish-level item{'s' if web_item_count != 1 else ''}."
+            if web_item_count
+            else (
+                f"Web discovery found {len(web_candidate_urls)} candidate URL{'s' if len(web_candidate_urls) != 1 else ''}, but none produced reliable dish-level items."
+                if web_menu_discovery_configured()
+                else "Google Programmable Search or SerpAPI is not configured on the API deployment."
+            )
+        ),
+        provider="google_programmable_search_or_serpapi",
+        source_url=web_source.source_url if web_source else None,
+        item_count=web_item_count,
+        started_at=search_started_at,
     )
     if web_source and web_source.sections:
         source = web_source.model_copy(update={"extraction_method": web_source.extraction_method or "web_menu_search"})
@@ -453,6 +566,41 @@ def ingest_menu_from_website(
         db_path=db_path,
     )
     return failed_source
+
+
+def menu_source_item_count(source: MenuSource | None) -> int:
+    if not source:
+        return 0
+    return sum(len(section.items) for section in source.sections)
+
+
+def append_trace_step(
+    trace: list[IngestionTraceStep] | None,
+    *,
+    step_id: str,
+    label: str,
+    status: str,
+    detail: str,
+    provider: str | None = None,
+    source_url: str | None = None,
+    item_count: int | None = None,
+    started_at: float | None = None,
+) -> None:
+    if trace is None:
+        return
+    duration_ms = round((time.monotonic() - started_at) * 1000) if started_at is not None else None
+    trace.append(
+        IngestionTraceStep(
+            id=step_id,
+            label=label,
+            status=status,
+            detail=detail,
+            provider=provider,
+            source_url=source_url,
+            item_count=item_count,
+            duration_ms=duration_ms,
+        )
+    )
 
 
 def ingest_first_matching_source(

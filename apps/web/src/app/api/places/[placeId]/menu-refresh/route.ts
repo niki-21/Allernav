@@ -55,7 +55,9 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
         id: `failed-${placeId}`,
         place_id: placeId,
         status: "failed",
-        message: error instanceof Error ? error.message : "FastAPI menu ingestion failed.",
+        message: error instanceof Error
+          ? `FastAPI menu ingestion failed: ${error.message}. Check FASTAPI_API_BASE_URL and the API deployment.`
+          : "FastAPI menu ingestion failed. Check FASTAPI_API_BASE_URL and the API deployment.",
         created_at: now,
         completed_at: now,
       },

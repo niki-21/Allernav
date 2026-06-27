@@ -13,6 +13,7 @@ from .models import (
     AllergyTag,
     HybridSearchRequest,
     HybridSearchResponse,
+    IngestionTraceStep,
     AskRestaurantRequest,
     AskRestaurantResponse,
     LatLng,
@@ -208,11 +209,13 @@ async def create_menu_refresh_job(
         MENU_REFRESH_JOBS[job.id] = job
         return job
 
+    trace: list[IngestionTraceStep] = []
     source = ingest_menu_from_website(
         restaurant_id=place_id,
         restaurant_name=resolved_name,
         website_url=resolved_url,
         restaurant_address=place.get("address"),
+        trace=trace,
     )
     item_count = sum(len(section.items) for section in source.sections)
     status = "complete" if item_count else "failed"
@@ -224,6 +227,43 @@ async def create_menu_refresh_job(
             f"Last checked source: {source.source_url or resolved_url}."
         )
     )
+    index_result = None
+    if item_count:
+        index_started_at = datetime.now(UTC)
+        try:
+            index_result = index_restaurant_menu(place_id)
+            index_status = "complete" if index_result.status == "indexed" else "skipped"
+            index_detail = (
+                f"Indexed {index_result.indexed_documents} dish document{'s' if index_result.indexed_documents != 1 else ''} in Azure AI Search."
+                if index_result.status == "indexed"
+                else f"Azure AI Search indexing returned {index_result.status.replace('_', ' ')}."
+            )
+        except Exception as exc:  # noqa: BLE001 - indexing failure should remain visible without discarding OCR output
+            index_status = "failed"
+            index_detail = str(exc) or "Azure AI Search indexing failed."
+        trace.append(
+            IngestionTraceStep(
+                id="search_index",
+                label="Index menu evidence",
+                status=index_status,
+                detail=index_detail,
+                provider="azure_ai_search",
+                item_count=index_result.indexed_documents if index_result else 0,
+                duration_ms=round((datetime.now(UTC) - index_started_at).total_seconds() * 1000),
+            )
+        )
+    else:
+        trace.append(
+            IngestionTraceStep(
+                id="search_index",
+                label="Index menu evidence",
+                status="skipped",
+                detail="Indexing was skipped because no dish-level menu items were extracted.",
+                provider="azure_ai_search",
+                item_count=0,
+            )
+        )
+
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
@@ -235,6 +275,7 @@ async def create_menu_refresh_job(
         extraction_method=source.extraction_method,
         page_count=source.page_count,
         extraction_confidence=source.extraction_confidence,
+        trace=trace,
         created_at=now,
         completed_at=datetime.now(UTC).isoformat(),
     )

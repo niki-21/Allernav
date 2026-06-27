@@ -19,6 +19,7 @@ import type {
   AskRestaurantResponse,
   LatLng,
   NearbySuggestionResponse,
+  MenuRefreshJob,
   PlaceDetailState,
   PlaceSummary,
 } from "@/lib/types";
@@ -46,12 +47,90 @@ export default function Home() {
   const [nearbyAskState, setNearbyAskState] = useState<"idle" | "loading" | "error">("idle");
   const [nearbyAskError, setNearbyAskError] = useState<string | null>(null);
   const [menuLoadingPlaceIds, setMenuLoadingPlaceIds] = useState<Set<string>>(() => new Set());
+  const [menuRefreshJobs, setMenuRefreshJobs] = useState<Record<string, MenuRefreshJob>>({});
   const initialized = useRef(false);
   const hydratedAllergenKey = useRef<string | null>(null);
   const requestSequence = useRef(0);
   const menuRefreshAttempts = useRef<Set<string>>(new Set());
   const agentAnalysisAttempts = useRef<Set<string>>(new Set());
   const [profileReady, setProfileReady] = useState(false);
+
+  const runMenuRefresh = useCallback(
+    async (details: Extract<PlaceDetailState, { status: "ready" }>["data"]) => {
+      const startedAt = new Date().toISOString();
+      setMenuLoadingPlaceIds((current) => new Set(current).add(details.id));
+      setMenuRefreshJobs((current) => ({
+        ...current,
+        [details.id]: {
+          id: `running-${details.id}`,
+          place_id: details.id,
+          status: "running",
+          message: "Menu discovery is running.",
+          item_count: 0,
+          trace: [
+            {
+              id: "request",
+              label: "Start menu discovery",
+              status: "running",
+              detail: "Checking the restaurant website, linked documents, rendered pages, and configured search providers.",
+            },
+          ],
+          created_at: startedAt,
+        },
+      }));
+
+      try {
+        const job = await refreshPlaceMenu(details.id, {
+          placeName: details.name,
+          websiteUrl: details.website_uri,
+        });
+        setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
+        const refreshedDetails = await fetchPlaceDetails(details.id, selectedAllergens);
+        setDetailStates((current) => {
+          const currentState = current[details.id];
+          if (!currentState || currentState.status !== "ready") {
+            return current;
+          }
+          return applyPlaceDetailSuccess(current, details.id, {
+            ...refreshedDetails,
+            agent_recommendation: currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
+          });
+        });
+      } catch (error) {
+        const completedAt = new Date().toISOString();
+        const message = error instanceof Error ? error.message : "Menu discovery failed.";
+        setMenuRefreshJobs((current) => ({
+          ...current,
+          [details.id]: {
+            id: `failed-${details.id}`,
+            place_id: details.id,
+            status: "failed",
+            message,
+            item_count: 0,
+            trace: [
+              {
+                id: "request",
+                label: "Run menu discovery",
+                status: "failed",
+                detail: message.includes("signal timed out")
+                  ? "The browser stopped waiting after 55 seconds. The API pipeline needs a shorter job or background processing."
+                  : message,
+              },
+            ],
+            created_at: startedAt,
+            completed_at: completedAt,
+          },
+        }));
+      } finally {
+        setMenuLoadingPlaceIds((current) => {
+          const next = new Set(current);
+          next.delete(details.id);
+          return next;
+        });
+      }
+    },
+    [selectedAllergens],
+  );
 
   useEffect(() => {
     const raw = window.localStorage.getItem(ALLERGY_PROFILE_STORAGE_KEY);
@@ -205,35 +284,7 @@ export default function Home() {
 
     if (!details.menu && details.website_uri && !menuRefreshAttempts.current.has(details.id)) {
       menuRefreshAttempts.current.add(details.id);
-      setMenuLoadingPlaceIds((current) => new Set(current).add(details.id));
-      void (async () => {
-        try {
-          await refreshPlaceMenu(details.id, {
-            placeName: details.name,
-            websiteUrl: details.website_uri,
-          });
-          const refreshedDetails = await fetchPlaceDetails(details.id, selectedAllergens);
-          setDetailStates((current) => {
-            const currentState = current[details.id];
-            if (!currentState || currentState.status !== "ready") {
-              return current;
-            }
-            return applyPlaceDetailSuccess(current, details.id, {
-              ...refreshedDetails,
-              agent_recommendation: currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
-            });
-          });
-        } catch {
-          // Menu ingestion is best-effort. Keep the already-loaded place details visible.
-          setDetailStates((current) => ({ ...current }));
-        } finally {
-          setMenuLoadingPlaceIds((current) => {
-            const next = new Set(current);
-            next.delete(details.id);
-            return next;
-          });
-        }
-      })();
+      void runMenuRefresh(details);
       return;
     }
 
@@ -271,7 +322,7 @@ export default function Home() {
         // If FastAPI or LangSmith tracing is not configured, the place panel should still work.
       }
     })();
-  }, [detailStates, selectedAllergens, selectedAllergenKey, selectedPlaceId]);
+  }, [detailStates, runMenuRefresh, selectedAllergens, selectedAllergenKey, selectedPlaceId]);
 
   const toggleAllergen = (allergen: AllergyTag) => {
     setSelectedAllergens((current) => {
@@ -529,6 +580,18 @@ export default function Home() {
             askResponse={selectedPlaceId ? askResponses[selectedPlaceId] : null}
             isAskingRestaurant={askingPlaceId === selectedPlaceId}
             isMenuLoading={selectedPlaceId ? menuLoadingPlaceIds.has(selectedPlaceId) : false}
+            menuRefreshJob={selectedPlaceId ? menuRefreshJobs[selectedPlaceId] : undefined}
+            onRefreshMenu={() => {
+              if (!selectedPlaceId) {
+                return;
+              }
+              const detailState = detailStates[selectedPlaceId];
+              if (!detailState || detailState.status !== "ready") {
+                return;
+              }
+              menuRefreshAttempts.current.add(selectedPlaceId);
+              void runMenuRefresh(detailState.data);
+            }}
             onAskRestaurant={askAboutSelectedPlace}
             onRetry={() => {
               if (!selectedPlaceId) {

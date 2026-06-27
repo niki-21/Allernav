@@ -1004,6 +1004,76 @@ textarea {
   line-height: 1.4;
 }
 
+.menu-trace {
+  border-top: 1px solid rgba(60, 64, 67, 0.12);
+  padding-top: 0.8rem;
+}
+
+.menu-trace summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.trace-status,
+.menu-trace-step span {
+  color: #5f6368;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.trace-status.failed,
+.menu-trace-step.failed span {
+  color: #b3261e;
+}
+
+.trace-status.complete,
+.menu-trace-step.complete span {
+  color: #0f7b61;
+}
+
+.menu-trace-list {
+  display: grid;
+  gap: 0;
+  margin: 0.65rem 0;
+  border-left: 2px solid rgba(60, 64, 67, 0.14);
+}
+
+.menu-trace-step {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.65rem 0 0.65rem 0.8rem;
+}
+
+.menu-trace-step + .menu-trace-step {
+  border-top: 1px solid rgba(60, 64, 67, 0.08);
+}
+
+.menu-trace-step > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.menu-trace-step p,
+.menu-trace-step small {
+  margin: 0;
+  color: #5f6368;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.menu-trace-step a {
+  width: fit-content;
+  color: #146cdb;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;

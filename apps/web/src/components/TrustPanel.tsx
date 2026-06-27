@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { AskRestaurantResponse, PlaceDetailsResponse, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type { AskRestaurantResponse, MenuRefreshJob, PlaceDetailsResponse, PlaceDetailState, PlaceSummary } from "@/lib/types";
 
 interface TrustPanelProps {
   place: PlaceSummary | null;
@@ -12,6 +12,8 @@ interface TrustPanelProps {
   askResponse?: AskRestaurantResponse | null;
   isAskingRestaurant?: boolean;
   isMenuLoading?: boolean;
+  menuRefreshJob?: MenuRefreshJob;
+  onRefreshMenu: () => void;
 }
 
 type PlaceTab = "overview" | "menu" | "reviews" | "about";
@@ -76,6 +78,8 @@ export default function TrustPanel({
   askResponse,
   isAskingRestaurant = false,
   isMenuLoading = false,
+  menuRefreshJob,
+  onRefreshMenu,
 }: TrustPanelProps) {
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
@@ -345,6 +349,43 @@ export default function TrustPanel({
                 </a>
               )}
             </article>
+          )}
+
+          {(isMenuLoading || menuRefreshJob) && (
+            <details className="menu-trace" open={isMenuLoading || menuRefreshJob?.status === "failed"}>
+              <summary>
+                <strong>Menu agent trace</strong>
+                <span className={`trace-status ${isMenuLoading ? "running" : menuRefreshJob?.status ?? "idle"}`}>
+                  {isMenuLoading ? "Running" : menuRefreshJob?.status ?? "Idle"}
+                </span>
+              </summary>
+              <div className="menu-trace-list">
+                {(menuRefreshJob?.trace ?? []).map((step) => (
+                  <article key={step.id} className={`menu-trace-step ${step.status}`}>
+                    <div>
+                      <strong>{step.label}</strong>
+                      <span>{step.status}</span>
+                    </div>
+                    <p>{step.detail}</p>
+                    <small>
+                      {[step.provider?.replaceAll("_", " "), typeof step.duration_ms === "number" ? `${step.duration_ms} ms` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </small>
+                    {step.source_url && (
+                      <a href={step.source_url} target="_blank" rel="noreferrer">
+                        Inspect source
+                      </a>
+                    )}
+                  </article>
+                ))}
+              </div>
+              {!isMenuLoading && menuRefreshJob?.status === "failed" && (
+                <button type="button" className="retry-button" onClick={onRefreshMenu}>
+                  Retry menu scan
+                </button>
+              )}
+            </details>
           )}
 
           {agentRecommendation && hasAgentDishEvidence && (

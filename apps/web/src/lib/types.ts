@@ -150,8 +150,20 @@ export interface MenuRefreshJob {
   extraction_method?: string | null;
   page_count?: number | null;
   extraction_confidence?: number | null;
+  trace: IngestionTraceStep[];
   created_at: string;
   completed_at?: string | null;
+}
+
+export interface IngestionTraceStep {
+  id: string;
+  label: string;
+  status: "running" | "complete" | "failed" | "skipped" | string;
+  detail: string;
+  provider?: string | null;
+  source_url?: string | null;
+  item_count?: number | null;
+  duration_ms?: number | null;
 }
 
 export interface ReviewRefreshJob {

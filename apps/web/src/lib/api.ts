@@ -118,9 +118,11 @@ export async function refreshPlaceMenu(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(buildMenuRefreshPayload(context)),
+    signal: AbortSignal.timeout(55_000),
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const body = (await response.json().catch(() => null)) as { detail?: string; message?: string } | null;
+    throw new Error(body?.message ?? body?.detail ?? `Menu refresh failed with status ${response.status}.`);
   }
   return (await response.json()) as MenuRefreshJob;
 }

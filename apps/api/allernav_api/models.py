@@ -403,6 +403,17 @@ class PlacePhoto(BaseModel):
     author_names: list[str] = Field(default_factory=list)
 
 
+class IngestionTraceStep(BaseModel):
+    id: str
+    label: str
+    status: str
+    detail: str
+    provider: str | None = None
+    source_url: str | None = None
+    item_count: int | None = Field(default=None, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
 class MenuRefreshJob(BaseModel):
     id: str
     place_id: str
@@ -414,6 +425,7 @@ class MenuRefreshJob(BaseModel):
     extraction_method: str | None = None
     page_count: int | None = None
     extraction_confidence: float | None = None
+    trace: list[IngestionTraceStep] = Field(default_factory=list)
     created_at: str
     completed_at: str | None = None
 

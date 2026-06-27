@@ -7,7 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from allernav_api.models import AllergyTag, LatLng, NearbySuggestionRequest, PlaceReviewSnippet, SearchRequest
+from allernav_api.models import (
+    AllergyTag,
+    IngestionTraceStep,
+    LatLng,
+    NearbySuggestionRequest,
+    PlaceReviewSnippet,
+    SearchRequest,
+)
 from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuItem, MenuSection, MenuSource, SourceType
 from allernav_api.agent_service import analyze_menu_service
 from allernav_api.menu_ingestion import save_menu_source
@@ -166,6 +173,15 @@ class ApiTests(unittest.TestCase):
             os.environ["ALLERNAV_MENU_DB"] = str(db_path)
 
             def fake_ingest(**kwargs):  # noqa: ANN003, ANN202
+                kwargs["trace"].append(
+                    IngestionTraceStep(
+                        id="source_discovery",
+                        label="Discover menu sources",
+                        status="complete",
+                        detail="Found one test menu source.",
+                        provider="test",
+                    )
+                )
                 source = MenuSource(
                     source_type=SourceType.RESTAURANT_WEBSITE,
                     source_url=kwargs["website_url"],
@@ -197,6 +213,8 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(refresh.status_code, 200)
         self.assertEqual(refresh.json()["status"], "complete")
+        self.assertEqual(refresh.json()["trace"][0]["id"], "source_discovery")
+        self.assertEqual(refresh.json()["trace"][-1]["id"], "search_index")
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
 
