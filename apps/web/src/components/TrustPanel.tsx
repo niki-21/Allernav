@@ -352,7 +352,14 @@ export default function TrustPanel({
           )}
 
           {(isMenuLoading || menuRefreshJob) && (
-            <details className="menu-trace" open={isMenuLoading || menuRefreshJob?.status === "failed"}>
+            <details
+              className="menu-trace"
+              open={
+                isMenuLoading ||
+                menuRefreshJob?.status === "failed" ||
+                menuRefreshJob?.status === "needs_background_refresh"
+              }
+            >
               <summary>
                 <strong>Menu agent trace</strong>
                 <span className={`trace-status ${isMenuLoading ? "running" : menuRefreshJob?.status ?? "idle"}`}>
@@ -380,7 +387,8 @@ export default function TrustPanel({
                   </article>
                 ))}
               </div>
-              {!isMenuLoading && menuRefreshJob?.status === "failed" && (
+              {!isMenuLoading &&
+                (menuRefreshJob?.status === "failed" || menuRefreshJob?.status === "needs_background_refresh") && (
                 <button type="button" className="retry-button" onClick={onRefreshMenu}>
                   Retry menu scan
                 </button>

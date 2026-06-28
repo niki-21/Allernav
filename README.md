@@ -162,9 +162,17 @@ AZURE_DOCUMENT_INTELLIGENCE_KEY=
 Menu refresh uses a layered discovery flow:
 
 - static restaurant website links, sitemaps, and common `/menu` paths
-- rendered website browsing through Apify Playwright when `APIFY_TOKEN` is set
-- optional web search discovery through Google Programmable Search or SerpAPI when the website does not expose a menu directly
+- optional web search discovery through Google Programmable Search or SerpAPI for official menu pages, item pages, PDFs, and images
 - Azure Document Intelligence OCR for discovered PDFs and menu images
+- rendered website browsing through Apify Playwright as a bounded fallback; discovered menu/category pages are opened directly and visible load-more controls are expanded
+
+Interactive refreshes use one overall time budget so blocked pages cannot starve later fallbacks. If menu candidates are found but extraction exceeds that budget, the trace reports `needs_background_refresh` instead of treating the source as absent.
+
+```bash
+MENU_INGESTION_TIMEOUT_SECONDS=45
+MENU_FETCH_TIMEOUT_SECONDS=4
+WEB_MENU_SEARCH_TIMEOUT_SECONDS=6
+```
 
 Set one of these optional web search providers in `apps/api/.env` to let refresh find public menu PDFs/photos beyond the restaurant homepage:
 

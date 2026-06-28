@@ -19,7 +19,8 @@ class WebMenuDiscoveryTests(unittest.TestCase):
             address="Brooklyn, NY",
         )
 
-        self.assertEqual(queries[0], "site:maison.example menu OR pdf OR jpg")
+        self.assertEqual(queries[0], "site:maison.example (menu OR pdf OR jpg)")
+        self.assertIn('site:maison.example/items/ "Maison Provence"', queries)
         self.assertIn('"Maison Provence" menu pdf', queries)
         self.assertIn('"Maison Provence" food menu Brooklyn, NY', queries)
 
@@ -77,6 +78,26 @@ class WebMenuDiscoveryTests(unittest.TestCase):
 
         self.assertTrue(calls)
         self.assertEqual([candidate.url for candidate in candidates], ["https://restaurant.example/menu.pdf"])
+
+    def test_keeps_official_popmenu_item_pages_as_discovery_candidates(self) -> None:
+        def fake_requester(_url: str, _timeout: float):  # noqa: ANN202
+            return {
+                "items": [
+                    {"title": "Truffle Burger", "link": "https://restaurant.example/items/truffle-burger"},
+                ]
+            }
+
+        with patch.dict(
+            "os.environ",
+            {"GOOGLE_SEARCH_API_KEY": "search-key", "GOOGLE_SEARCH_ENGINE_ID": "engine-id"},
+        ):
+            candidates = discover_web_menu_candidates(
+                restaurant_name="Restaurant",
+                website_url="https://restaurant.example/",
+                requester=fake_requester,
+            )
+
+        self.assertEqual(candidates[0].url, "https://restaurant.example/items/truffle-burger")
 
 
 if __name__ == "__main__":

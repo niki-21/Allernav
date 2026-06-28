@@ -26,6 +26,7 @@ class RenderedMenuPage:
 class RenderedMenuDiscovery:
     urls: list[str]
     pages: list[RenderedMenuPage]
+    error: str | None = None
 
 
 def menu_discovery_page_function() -> str:
@@ -34,6 +35,22 @@ def menu_discovery_page_function() -> str:
 async function pageFunction(context) {
     const { page, request } = context;
     await page.waitForTimeout(__WAIT_MS__);
+
+    for (let pass = 0; pass < 3; pass += 1) {
+        const controls = page.getByText(/load more content|load more|show more|view more/i, { exact: false });
+        const count = Math.min(await controls.count().catch(() => 0), 4);
+        if (!count) break;
+        let clicked = 0;
+        for (let index = 0; index < count; index += 1) {
+            const control = controls.nth(index);
+            if (await control.isVisible().catch(() => false)) {
+                await control.click({ timeout: 1500 }).catch(() => null);
+                clicked += 1;
+            }
+        }
+        if (!clicked) break;
+        await page.waitForTimeout(800);
+    }
 
     const links = await page.$$eval('a[href]', (anchors) => anchors.map((anchor) => {
         const href = anchor.href;
@@ -115,6 +132,8 @@ def discover_rendered_menu_evidence(
     website_url: str,
     *,
     requester: Requester | None = None,
+    candidate_urls: list[str] | None = None,
+    timeout_seconds: float | None = None,
 ) -> RenderedMenuDiscovery:
     token = os.getenv("APIFY_TOKEN", "").strip()
     if not token or os.getenv("APIFY_MENU_DISCOVERY_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
@@ -124,7 +143,12 @@ def discover_rendered_menu_evidence(
     actor = os.getenv("APIFY_MENU_DISCOVERY_ACTOR", DEFAULT_APIFY_MENU_DISCOVERY_ACTOR).strip()
     actor_path = quote(actor.replace("/", "~"), safe="~")
     url = f"{base_url.rstrip('/')}/actors/{actor_path}/run-sync-get-dataset-items"
-    body = build_apify_menu_discovery_input(website_url)
+    body = build_apify_menu_discovery_input(website_url, candidate_urls=candidate_urls)
+    timeout = (
+        request_timeout_seconds()
+        if timeout_seconds is None
+        else max(3.0, min(request_timeout_seconds(), timeout_seconds))
+    )
 
     try:
         payload = (requester or default_requester)(
@@ -132,7 +156,7 @@ def discover_rendered_menu_evidence(
             {"token": token},
             body,
             {"Content-Type": "application/json"},
-            request_timeout_seconds(),
+            timeout,
         )
     except (httpx.HTTPError, ValueError) as exc:
         raise ApifyMenuDiscoveryError(str(exc)) from exc
@@ -140,9 +164,19 @@ def discover_rendered_menu_evidence(
     return parse_rendered_menu_discovery(payload)
 
 
-def build_apify_menu_discovery_input(website_url: str) -> dict[str, Any]:
+def build_apify_menu_discovery_input(
+    website_url: str,
+    *,
+    candidate_urls: list[str] | None = None,
+) -> dict[str, Any]:
+    start_urls: list[str] = []
+    for candidate in [*(candidate_urls or []), website_url]:
+        if candidate.startswith(("http://", "https://")) and candidate not in start_urls:
+            start_urls.append(candidate)
+        if len(start_urls) >= max_pages_per_crawl():
+            break
     return {
-        "startUrls": [{"url": website_url}],
+        "startUrls": [{"url": url} for url in start_urls],
         "linkSelector": "a[href]",
         "maxRequestsPerCrawl": max_pages_per_crawl(),
         "maxRequestRetries": 0,

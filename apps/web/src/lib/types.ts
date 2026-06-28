@@ -142,7 +142,7 @@ export interface RecommendedMenuItem {
 export interface MenuRefreshJob {
   id: string;
   place_id: string;
-  status: "queued" | "running" | "complete" | "failed";
+  status: "queued" | "running" | "complete" | "failed" | "needs_background_refresh";
   message: string;
   item_count?: number;
   source_url?: string | null;

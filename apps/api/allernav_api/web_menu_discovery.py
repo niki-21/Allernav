@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -32,14 +33,18 @@ def discover_web_menu_candidates(
     website_url: str | None = None,
     address: str | None = None,
     requester: Requester | None = None,
+    time_budget_seconds: float | None = None,
 ) -> list[WebMenuCandidate]:
     if not restaurant_name:
         return []
 
     queries = build_menu_search_queries(restaurant_name=restaurant_name, website_url=website_url, address=address)
+    deadline = time.monotonic() + time_budget_seconds if time_budget_seconds is not None else None
     candidates: list[WebMenuCandidate] = []
     for query in queries:
-        for candidate in search_menu_web(query, requester=requester):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        for candidate in search_menu_web(query, requester=requester, deadline=deadline):
             if is_useful_menu_candidate(candidate.url) and candidate.url not in [item.url for item in candidates]:
                 candidates.append(candidate)
         if len(candidates) >= 12:
@@ -63,24 +68,37 @@ def build_menu_search_queries(
         except ValueError:
             host = ""
     queries = [
-        f'"{name}" menu',
         f'"{name}" menu pdf',
+        f'"{name}" menu',
         f'"{name}" menu photo',
         f'"{name}" food menu{location}',
     ]
     if host:
-        queries.insert(0, f'site:{host} menu OR pdf OR jpg')
+        queries.insert(0, f'site:{host} (menu OR pdf OR jpg)')
+        queries.insert(1, f'site:{host}/items/ "{name}"')
     return queries
 
 
-def search_menu_web(query: str, *, requester: Requester | None = None) -> list[WebMenuCandidate]:
-    google = search_google_programmable(query, requester=requester)
+def search_menu_web(
+    query: str,
+    *,
+    requester: Requester | None = None,
+    deadline: float | None = None,
+) -> list[WebMenuCandidate]:
+    google = search_google_programmable(query, requester=requester, timeout=remaining_request_timeout(deadline))
     if google:
         return google
-    return search_serpapi(query, requester=requester)
+    if deadline is not None and time.monotonic() >= deadline:
+        return []
+    return search_serpapi(query, requester=requester, timeout=remaining_request_timeout(deadline))
 
 
-def search_google_programmable(query: str, *, requester: Requester | None = None) -> list[WebMenuCandidate]:
+def search_google_programmable(
+    query: str,
+    *,
+    requester: Requester | None = None,
+    timeout: float | None = None,
+) -> list[WebMenuCandidate]:
     api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
     search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "").strip()
     if not api_key or not search_engine_id:
@@ -93,13 +111,18 @@ def search_google_programmable(query: str, *, requester: Requester | None = None
         "safe": "active",
     }
     url = f"https://www.googleapis.com/customsearch/v1?{parse.urlencode(params)}"
-    payload = request_json(url, requester=requester)
+    payload = request_json(url, requester=requester, timeout=timeout or search_request_timeout_seconds())
     if not isinstance(payload, dict):
         return []
     return parse_google_search_candidates(payload)
 
 
-def search_serpapi(query: str, *, requester: Requester | None = None) -> list[WebMenuCandidate]:
+def search_serpapi(
+    query: str,
+    *,
+    requester: Requester | None = None,
+    timeout: float | None = None,
+) -> list[WebMenuCandidate]:
     api_key = os.getenv("SERPAPI_API_KEY", "").strip()
     if not api_key:
         return []
@@ -111,13 +134,28 @@ def search_serpapi(query: str, *, requester: Requester | None = None) -> list[We
         "safe": "active",
     }
     url = f"https://serpapi.com/search.json?{parse.urlencode(params)}"
-    payload = request_json(url, requester=requester)
+    payload = request_json(url, requester=requester, timeout=timeout or search_request_timeout_seconds())
     if not isinstance(payload, dict):
         return []
     return parse_serpapi_candidates(payload)
 
 
-def request_json(url: str, *, requester: Requester | None = None, timeout: float = 12.0) -> Any:
+def search_request_timeout_seconds() -> float:
+    raw = os.getenv("WEB_MENU_SEARCH_TIMEOUT_SECONDS", "6")
+    try:
+        return max(1.0, min(12.0, float(raw)))
+    except ValueError:
+        return 6.0
+
+
+def remaining_request_timeout(deadline: float | None) -> float:
+    configured = search_request_timeout_seconds()
+    if deadline is None:
+        return configured
+    return max(0.25, min(configured, deadline - time.monotonic()))
+
+
+def request_json(url: str, *, requester: Requester | None = None, timeout: float = 6.0) -> Any:
     if requester:
         return requester(url, timeout)
     req = request.Request(url)
@@ -201,6 +239,7 @@ def is_useful_menu_candidate(url: str) -> bool:
         for token in (
             "menu",
             "menus",
+            "/items/",
             "pdf",
             ".jpg",
             ".jpeg",

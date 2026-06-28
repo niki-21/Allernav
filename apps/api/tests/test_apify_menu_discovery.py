@@ -47,6 +47,25 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertEqual(payload["proxyConfiguration"], {"useApifyProxy": True})
         self.assertIn("pageFunction", payload)
         self.assertIn("page.$$eval('a[href]'", str(payload["pageFunction"]))
+        self.assertIn("load more content", str(payload["pageFunction"]).lower())
+
+    def test_starts_with_discovered_category_pages_before_homepage(self) -> None:
+        payload = build_apify_menu_discovery_input(
+            "https://restaurant.example/",
+            candidate_urls=[
+                "https://restaurant.example/menus/lunch",
+                "https://restaurant.example/menus/dinner",
+            ],
+        )
+
+        self.assertEqual(
+            payload["startUrls"],
+            [
+                {"url": "https://restaurant.example/menus/lunch"},
+                {"url": "https://restaurant.example/menus/dinner"},
+                {"url": "https://restaurant.example/"},
+            ],
+        )
 
     def test_parses_rendered_menu_candidates_from_links_and_frames(self) -> None:
         urls = parse_rendered_menu_urls(APIFY_RENDERED_PAYLOAD)

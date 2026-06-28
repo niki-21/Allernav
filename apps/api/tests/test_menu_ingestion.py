@@ -286,7 +286,7 @@ class MenuIngestionTests(unittest.TestCase):
 
         self.assertIn("https://restaurant.example/menu", candidates)
         self.assertIn("https://restaurant.example/food-menu", candidates)
-        self.assertIn("https://restaurant.example/menu.pdf", candidates)
+        self.assertIn("https://restaurant.example/menus/dinner", candidates)
 
     def test_discovers_menu_from_sitemap_when_homepage_has_no_menu_link(self) -> None:
         pages = {
@@ -447,6 +447,54 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.document_url, "https://cdn.example.com/menu-photo.jpg")
         self.assertEqual(source.content_type, "image/jpeg")
         self.assertEqual(source.sections[0].items[0].name, "Normandie Crepe")
+
+    def test_web_search_runs_before_rendered_browser_fallback(self) -> None:
+        call_order: list[str] = []
+
+        def search_candidates(**_kwargs):  # noqa: ANN202
+            call_order.append("search")
+            return []
+
+        def rendered_discovery(_url, **_kwargs):  # noqa: ANN202
+            call_order.append("rendered")
+            return RenderedMenuDiscovery(urls=[], pages=[])
+
+        with patch("allernav_api.menu_ingestion.fetch_html_url", return_value=None), patch(
+            "allernav_api.menu_ingestion.discover_web_menu_candidates",
+            side_effect=search_candidates,
+        ), patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            side_effect=rendered_discovery,
+        ):
+            ingest_menu_from_website(
+                restaurant_id="ordered-fallbacks",
+                restaurant_name="Ordered Fallbacks",
+                website_url="https://restaurant.example/",
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(call_order, ["search", "rendered"])
+
+    def test_rendered_timeout_is_reported_as_deferred(self) -> None:
+        trace = []
+        with patch("allernav_api.menu_ingestion.fetch_html_url", return_value=None), patch(
+            "allernav_api.menu_ingestion.discover_web_menu_candidates",
+            return_value=[],
+        ), patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=RenderedMenuDiscovery(urls=[], pages=[], error="request timed out"),
+        ):
+            ingest_menu_from_website(
+                restaurant_id="rendered-timeout",
+                restaurant_name="Rendered Timeout",
+                website_url="https://restaurant.example/",
+                db_path=self.db_path,
+                trace=trace,
+            )
+
+        rendered_step = next(step for step in trace if step.id == "rendered_browser")
+        self.assertEqual(rendered_step.status, "deferred")
+        self.assertIn("background refresh", rendered_step.detail.lower())
 
     def test_image_ocr_menu_preserves_low_confidence_metadata(self) -> None:
         source = parse_menu_document(

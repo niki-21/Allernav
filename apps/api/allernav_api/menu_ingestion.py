@@ -164,15 +164,16 @@ ADD_ON_ONLY_WORDS = {
 MENU_PATH_CANDIDATES = (
     "/menu",
     "/menus",
+    "/menus/brunch",
+    "/menus/lunch",
+    "/menus/dinner",
+    "/menus/desserts",
     "/food-menu",
     "/dinner-menu",
     "/lunch-menu",
     "/brunch-menu",
     "/main-menu",
     "/restaurant-menu",
-    "/menu.pdf",
-    "/menus/menu.pdf",
-    "/assets/menu.pdf",
 )
 
 SITEMAP_PATH_CANDIDATES = (
@@ -206,6 +207,26 @@ def default_db_path() -> Path:
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parents[1] / ".data" / "menu_ingestion.sqlite"
+
+
+def menu_ingestion_timeout_seconds() -> float:
+    raw = os.getenv("MENU_INGESTION_TIMEOUT_SECONDS", "45")
+    try:
+        return max(10.0, min(50.0, float(raw)))
+    except ValueError:
+        return 45.0
+
+
+def menu_fetch_timeout_seconds() -> float:
+    raw = os.getenv("MENU_FETCH_TIMEOUT_SECONDS", "4")
+    try:
+        return max(1.0, min(10.0, float(raw)))
+    except ValueError:
+        return 4.0
+
+
+def remaining_seconds(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
 
 
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
@@ -374,10 +395,13 @@ def ingest_menu_from_website(
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
     started_at = time.monotonic()
+    deadline = started_at + menu_ingestion_timeout_seconds()
+    discovery_deadline = min(deadline, started_at + 8.0)
     static_candidate_urls = discover_candidate_urls(
         website_url,
         fetcher,
         allow_rendered_discovery=False,
+        deadline=discovery_deadline,
     )
     append_trace_step(
         trace,
@@ -394,13 +418,15 @@ def ingest_menu_from_website(
         started_at=started_at,
     )
     parse_started_at = time.monotonic()
+    static_deadline = min(deadline, parse_started_at + 12.0)
     last_source: MenuSource | None = ingest_first_matching_source(
-        candidate_urls=static_candidate_urls,
+        candidate_urls=static_candidate_urls[:6],
         fetcher=fetcher,
         document_extractor=document_extractor,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         db_path=db_path,
+        deadline=static_deadline,
     )
     static_item_count = menu_source_item_count(last_source)
     document_candidates = [url for url in static_candidate_urls if looks_like_document_url(url)]
@@ -452,63 +478,23 @@ def ingest_menu_from_website(
     if last_source and last_source.sections:
         return last_source
 
-    rendered_started_at = time.monotonic()
-    rendered_discovery = discover_rendered_menu_evidence_safely(website_url) if fetch_html is None else RenderedMenuDiscovery(urls=[], pages=[])
-    rendered_source = ingest_rendered_menu_pages(
-        rendered_discovery=rendered_discovery,
-        restaurant_id=restaurant_id,
-        restaurant_name=restaurant_name,
-        db_path=db_path,
-    )
-    rendered_item_count = menu_source_item_count(rendered_source)
-    append_trace_step(
-        trace,
-        step_id="rendered_browser",
-        label="Inspect rendered website",
-        status="complete" if rendered_item_count else ("failed" if apify_menu_discovery_configured() else "skipped"),
-        detail=(
-            f"Rendered browsing extracted {rendered_item_count} dish-level item{'s' if rendered_item_count != 1 else ''}."
-            if rendered_item_count
-            else (
-                f"Rendered browsing found {len(rendered_discovery.pages)} menu-like page{'s' if len(rendered_discovery.pages) != 1 else ''} and {len(rendered_discovery.urls)} candidate link{'s' if len(rendered_discovery.urls) != 1 else ''}, but no usable dishes."
-                if apify_menu_discovery_configured()
-                else "Apify rendered menu discovery is not configured on the API deployment."
-            )
-        ),
-        provider="apify_playwright",
-        source_url=rendered_source.source_url,
-        item_count=rendered_item_count,
-        started_at=rendered_started_at,
-    )
-    if rendered_source.sections:
-        return rendered_source
-    if rendered_source.source_url:
-        last_source = rendered_source
-
-    rendered_candidate_urls = [url for url in rendered_discovery.urls if url not in static_candidate_urls]
-    rendered_link_source = ingest_first_matching_source(
-        candidate_urls=rendered_candidate_urls,
-        fetcher=fetcher,
-        document_extractor=document_extractor,
-        restaurant_id=restaurant_id,
-        restaurant_name=restaurant_name,
-        db_path=db_path,
-    )
-    if rendered_link_source and rendered_link_source.sections:
-        return rendered_link_source
-    if rendered_link_source:
-        last_source = rendered_link_source
-
     search_started_at = time.monotonic()
-    web_candidate_urls = [
-        candidate.url
-        for candidate in discover_web_menu_candidates(
+    search_budget = min(12.0, remaining_seconds(deadline))
+    web_candidates = (
+        discover_web_menu_candidates(
             restaurant_name=restaurant_name,
             website_url=website_url,
             address=restaurant_address,
+            time_budget_seconds=search_budget,
         )
-        if candidate.url not in [*static_candidate_urls, *rendered_candidate_urls]
-    ]
+        if search_budget >= 1.0
+        else []
+    )
+    excluded_urls = set(static_candidate_urls)
+    web_candidate_urls = sorted(
+        {candidate.url for candidate in web_candidates if candidate.url not in excluded_urls},
+        key=candidate_url_priority,
+    )
     web_source = ingest_first_matching_source(
         candidate_urls=web_candidate_urls,
         fetcher=fetcher,
@@ -516,12 +502,13 @@ def ingest_menu_from_website(
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         db_path=db_path,
+        deadline=deadline,
     )
     web_item_count = menu_source_item_count(web_source)
     append_trace_step(
         trace,
         step_id="web_search",
-        label="Search for external menu evidence",
+        label="Search official menu evidence",
         status="complete" if web_item_count else ("failed" if web_menu_discovery_configured() else "skipped"),
         detail=(
             f"Web discovery found {len(web_candidate_urls)} candidate URL{'s' if len(web_candidate_urls) != 1 else ''} and extracted {web_item_count} dish-level item{'s' if web_item_count != 1 else ''}."
@@ -549,6 +536,91 @@ def ingest_menu_from_website(
     if web_source:
         last_source = web_source
 
+    rendered_started_at = time.monotonic()
+    rendered_budget = remaining_seconds(deadline)
+    rendered_candidates = sorted(
+        {
+            url
+            for url in [*static_candidate_urls, *web_candidate_urls]
+            if not looks_like_document_url(url) and normalize_url(url) != normalize_url(website_url)
+        },
+        key=candidate_url_priority,
+    )
+    should_render = fetch_html is None and rendered_budget >= 3.0
+    rendered_discovery = (
+        discover_rendered_menu_evidence_safely(
+            website_url,
+            candidate_urls=rendered_candidates,
+            timeout_seconds=rendered_budget,
+        )
+        if should_render
+        else RenderedMenuDiscovery(urls=[], pages=[])
+    )
+    rendered_source = ingest_rendered_menu_pages(
+        rendered_discovery=rendered_discovery,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+    )
+    rendered_item_count = menu_source_item_count(rendered_source)
+    rendered_timed_out = bool(
+        rendered_discovery.error
+        and any(token in rendered_discovery.error.lower() for token in ("timeout", "timed out", "deadline"))
+    )
+    rendered_deferred = fetch_html is None and (rendered_budget < 3.0 or rendered_timed_out)
+    append_trace_step(
+        trace,
+        step_id="rendered_browser",
+        label="Inspect rendered website",
+        status=(
+            "complete"
+            if rendered_item_count
+            else (
+                "deferred"
+                if rendered_deferred
+                else ("failed" if apify_menu_discovery_configured() else "skipped")
+            )
+        ),
+        detail=(
+            f"Rendered browsing extracted {rendered_item_count} dish-level item{'s' if rendered_item_count != 1 else ''}."
+            if rendered_item_count
+            else (
+                "Menu candidates were found, but dish extraction exceeded the interactive request budget. A background refresh is needed."
+                if rendered_deferred
+                else (
+                    f"Rendered browsing found {len(rendered_discovery.pages)} menu-like page"
+                    f"{'s' if len(rendered_discovery.pages) != 1 else ''} and {len(rendered_discovery.urls)} candidate link"
+                    f"{'s' if len(rendered_discovery.urls) != 1 else ''}, but no usable dishes."
+                )
+                if apify_menu_discovery_configured()
+                else "Apify rendered menu discovery is not configured on the API deployment."
+            )
+        ),
+        provider="apify_playwright",
+        source_url=rendered_source.source_url,
+        item_count=rendered_item_count,
+        started_at=rendered_started_at,
+    )
+    if rendered_source.sections:
+        return rendered_source
+    if rendered_source.source_url:
+        last_source = rendered_source
+
+    rendered_candidate_urls = [url for url in rendered_discovery.urls if url not in static_candidate_urls]
+    rendered_link_source = ingest_first_matching_source(
+        candidate_urls=rendered_candidate_urls,
+        fetcher=fetcher,
+        document_extractor=document_extractor,
+        restaurant_id=restaurant_id,
+        restaurant_name=restaurant_name,
+        db_path=db_path,
+        deadline=deadline,
+    )
+    if rendered_link_source and rendered_link_source.sections:
+        return rendered_link_source
+    if rendered_link_source:
+        last_source = rendered_link_source
+
     failed_source = last_source or MenuSource(
         source_type=SourceType.RESTAURANT_WEBSITE,
         source_url=website_url,
@@ -557,12 +629,17 @@ def ingest_menu_from_website(
         raw_text=None,
         sections=[],
     )
+    needs_background_refresh = any(step.status == "deferred" for step in trace or [])
     save_menu_source(
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         source=failed_source,
-        status="failed",
-        error_message="No structured menu items were extracted from official website pages.",
+        status="needs_background_refresh" if needs_background_refresh else "failed",
+        error_message=(
+            "Menu candidates were found, but extraction exceeded the interactive request budget."
+            if needs_background_refresh
+            else "No structured menu items were extracted from official website pages."
+        ),
         db_path=db_path,
     )
     return failed_source
@@ -611,9 +688,12 @@ def ingest_first_matching_source(
     restaurant_id: str,
     restaurant_name: str | None,
     db_path: Path | None = None,
+    deadline: float | None = None,
 ) -> MenuSource | None:
     last_source: MenuSource | None = None
     for candidate_url in candidate_urls:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         if looks_like_document_url(candidate_url):
             source = parse_menu_document(candidate_url, document_extractor)
             last_source = source
@@ -678,6 +758,7 @@ def discover_candidate_urls(
     *,
     allow_rendered_discovery: bool | None = None,
     rendered_urls: list[str] | None = None,
+    deadline: float | None = None,
 ) -> list[str]:
     normalized = normalize_url(website_url)
     if not normalized:
@@ -689,6 +770,8 @@ def discover_candidate_urls(
     fetched_pages: dict[str, str | None] = {}
 
     def fetch_once(url: str) -> str | None:
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
         if url not in fetched_pages:
             fetched_pages[url] = fetcher(url)
         return fetched_pages[url]
@@ -708,6 +791,8 @@ def discover_candidate_urls(
                 candidates.append(url)
 
     for sitemap_url in sitemap_url_candidates(normalized):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         sitemap = fetch_once(sitemap_url)
         if not sitemap:
             continue
@@ -721,6 +806,8 @@ def discover_candidate_urls(
 
     if homepage:
         for hub_url in sorted(extract_menu_discovery_hub_urls(homepage, normalized), key=candidate_url_priority)[:4]:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             hub_page = fetch_once(hub_url)
             if not hub_page:
                 continue
@@ -728,14 +815,23 @@ def discover_candidate_urls(
                 if url not in candidates:
                     candidates.append(url)
 
-    return candidates[:16]
+    return sorted(candidates, key=candidate_url_priority)[:16]
 
 
-def discover_rendered_menu_evidence_safely(website_url: str) -> RenderedMenuDiscovery:
+def discover_rendered_menu_evidence_safely(
+    website_url: str,
+    *,
+    candidate_urls: list[str] | None = None,
+    timeout_seconds: float | None = None,
+) -> RenderedMenuDiscovery:
     try:
-        return discover_rendered_menu_evidence(website_url)
-    except ApifyMenuDiscoveryError:
-        return RenderedMenuDiscovery(urls=[], pages=[])
+        return discover_rendered_menu_evidence(
+            website_url,
+            candidate_urls=candidate_urls,
+            timeout_seconds=timeout_seconds,
+        )
+    except ApifyMenuDiscoveryError as exc:
+        return RenderedMenuDiscovery(urls=[], pages=[], error=str(exc) or "Rendered menu discovery failed.")
 
 
 def fetch_html_url(url: str) -> str | None:
@@ -746,7 +842,7 @@ def fetch_html_url(url: str) -> str | None:
     req.add_header("User-Agent", "AllerNavMenuBot/1.0 (+https://allernav.local)")
     req.add_header("Accept", "text/html,application/xhtml+xml")
     try:
-        with request.urlopen(req, timeout=10) as response:
+        with request.urlopen(req, timeout=menu_fetch_timeout_seconds()) as response:
             content_type = response.headers.get("content-type", "")
             if "text/html" not in content_type:
                 return None

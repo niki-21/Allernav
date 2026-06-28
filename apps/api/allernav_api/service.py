@@ -218,13 +218,18 @@ async def create_menu_refresh_job(
         trace=trace,
     )
     item_count = sum(len(section.items) for section in source.sections)
-    status = "complete" if item_count else "failed"
+    needs_background_refresh = any(step.status == "deferred" for step in trace)
+    status = "complete" if item_count else ("needs_background_refresh" if needs_background_refresh else "failed")
     message = (
         f"Captured {item_count} menu item{'s' if item_count != 1 else ''} from {source.source_url}."
         if item_count
         else (
-            "No reliable dish-level menu items were extracted. "
-            f"Last checked source: {source.source_url or resolved_url}."
+            "Menu candidates were found, but the interactive scan reached its time budget. A background refresh is needed."
+            if needs_background_refresh
+            else (
+                "No reliable dish-level menu items were extracted. "
+                f"Last checked source: {source.source_url or resolved_url}."
+            )
         )
     )
     index_result = None
