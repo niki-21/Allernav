@@ -34,3 +34,39 @@ create index if not exists menu_documents_restaurant_id_idx
 
 create unique index if not exists menu_documents_restaurant_url_idx
   on public.menu_documents (restaurant_id, document_url);
+
+create table if not exists public.menu_refresh_jobs (
+  id uuid primary key,
+  restaurant_id text not null,
+  status text not null,
+  message text not null,
+  processed_documents integer not null default 0,
+  total_documents integer not null default 0,
+  job_json jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create index if not exists menu_refresh_jobs_restaurant_idx
+  on public.menu_refresh_jobs (restaurant_id, created_at desc);
+
+create index if not exists menu_refresh_jobs_status_idx
+  on public.menu_refresh_jobs (status);
+
+create table if not exists public.menu_document_pages (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.menu_refresh_jobs (id) on delete cascade,
+  restaurant_id text not null,
+  document_url text not null,
+  page_number integer not null,
+  status text not null,
+  raw_text text,
+  extraction_confidence numeric,
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists menu_document_pages_job_url_idx
+  on public.menu_document_pages (job_id, document_url);

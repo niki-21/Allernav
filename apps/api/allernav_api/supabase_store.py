@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib import error, parse, request
 
-from .models import MenuSource
+from .models import MenuRefreshJob, MenuSource
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,106 @@ def load_menu_source(restaurant_id: str) -> tuple[str | None, MenuSource] | None
     if not isinstance(row, dict) or not isinstance(row.get("menu_json"), dict):
         return None
     return row.get("restaurant_name"), MenuSource.model_validate(row["menu_json"])
+
+
+def save_menu_refresh_job(job: MenuRefreshJob) -> bool:
+    config = get_supabase_config()
+    if not config:
+        return False
+    payload = {
+        "id": job.id,
+        "restaurant_id": job.place_id,
+        "status": job.status,
+        "message": job.message,
+        "processed_documents": job.processed_documents,
+        "total_documents": job.total_documents,
+        "job_json": job.model_dump(mode="json"),
+        "created_at": job.created_at,
+        "completed_at": job.completed_at,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    response = _request(
+        config,
+        "/rest/v1/menu_refresh_jobs",
+        method="POST",
+        body=[payload],
+        headers={"Prefer": "resolution=merge-duplicates", "Content-Type": "application/json"},
+        query={"on_conflict": "id"},
+    )
+    return response is not None
+
+
+def load_menu_refresh_job(job_id: str) -> MenuRefreshJob | None:
+    config = get_supabase_config()
+    if not config:
+        return None
+    payload = _request(
+        config,
+        "/rest/v1/menu_refresh_jobs",
+        method="GET",
+        query={"id": f"eq.{job_id}", "select": "job_json", "limit": "1"},
+    )
+    if not isinstance(payload, list) or not payload:
+        return None
+    value = payload[0].get("job_json") if isinstance(payload[0], dict) else None
+    return MenuRefreshJob.model_validate(value) if isinstance(value, dict) else None
+
+
+def save_menu_document_page(
+    *,
+    job_id: str,
+    restaurant_id: str,
+    document_url: str,
+    page_number: int,
+    status: str,
+    raw_text: str | None = None,
+    extraction_confidence: float | None = None,
+    error_message: str | None = None,
+) -> bool:
+    config = get_supabase_config()
+    if not config:
+        return False
+    payload = {
+        "job_id": job_id,
+        "restaurant_id": restaurant_id,
+        "document_url": document_url,
+        "page_number": page_number,
+        "status": status,
+        "raw_text": raw_text,
+        "extraction_confidence": extraction_confidence,
+        "error": error_message,
+    }
+    response = _request(
+        config,
+        "/rest/v1/menu_document_pages",
+        method="POST",
+        body=[payload],
+        headers={"Prefer": "resolution=merge-duplicates", "Content-Type": "application/json"},
+        query={"on_conflict": "job_id,document_url"},
+    )
+    return response is not None
+
+
+def load_menu_document_pages(job_id: str) -> dict[str, dict[str, object]]:
+    config = get_supabase_config()
+    if not config:
+        return {}
+    payload = _request(
+        config,
+        "/rest/v1/menu_document_pages",
+        method="GET",
+        query={
+            "job_id": f"eq.{job_id}",
+            "select": "document_url,page_number,status,raw_text,extraction_confidence,error",
+        },
+    )
+    if not isinstance(payload, list):
+        return {}
+    return {
+        str(row["document_url"]): row
+        for row in payload
+        if isinstance(row, dict) and isinstance(row.get("document_url"), str)
+    }
 
 
 def _request(

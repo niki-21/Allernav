@@ -112,6 +112,9 @@ export interface MenuItem {
   price?: string | null;
   likely_safe_for: AllergyTag[];
   likely_risky_for: AllergyTag[];
+  source_page?: number | null;
+  source_url?: string | null;
+  ocr_confidence?: number | null;
 }
 
 export interface MenuSection {
@@ -125,6 +128,8 @@ export interface PlaceMenu {
   status?: string | null;
   content_type?: string | null;
   document_url?: string | null;
+  document_urls?: string[];
+  menu_version?: string | null;
   extraction_method?: string | null;
   page_count?: number | null;
   extraction_confidence?: number | null;
@@ -142,7 +147,16 @@ export interface RecommendedMenuItem {
 export interface MenuRefreshJob {
   id: string;
   place_id: string;
-  status: "queued" | "running" | "complete" | "failed" | "needs_background_refresh";
+  status:
+    | "queued"
+    | "running"
+    | "discovering"
+    | "ocr_processing"
+    | "normalizing"
+    | "indexing"
+    | "complete"
+    | "failed"
+    | "needs_background_refresh";
   message: string;
   item_count?: number;
   source_url?: string | null;
@@ -150,6 +164,10 @@ export interface MenuRefreshJob {
   extraction_method?: string | null;
   page_count?: number | null;
   extraction_confidence?: number | null;
+  document_urls?: string[];
+  total_documents?: number;
+  processed_documents?: number;
+  menu_version?: string | null;
   trace: IngestionTraceStep[];
   created_at: string;
   completed_at?: string | null;

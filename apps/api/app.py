@@ -45,6 +45,7 @@ from allernav_api.agent_service import (
 )
 from allernav_api.service import (
     create_menu_refresh_job,
+    get_menu_refresh_job_service,
     create_review_refresh_job,
     create_restaurant_question,
     get_place_details_service,
@@ -111,6 +112,12 @@ def health() -> dict[str, object]:
         and os.getenv("AZURE_OPENAI_API_KEY")
         and os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
     )
+    azure_openai_chat = bool(
+        os.getenv("AZURE_OPENAI_ENDPOINT")
+        and os.getenv("AZURE_OPENAI_API_KEY")
+        and os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+    )
+    azure_service_bus_menu = bool(os.getenv("AZURE_SERVICE_BUS_SEND_CONNECTION_STRING"))
     apify = bool(os.getenv("APIFY_TOKEN"))
     apify_menu_discovery = apify and os.getenv("APIFY_MENU_DISCOVERY_ENABLED", "true").strip().lower() not in {
         "0",
@@ -130,6 +137,9 @@ def health() -> dict[str, object]:
             "azure_document_intelligence": azure_document_intelligence,
             "azure_search": azure_search,
             "azure_openai_embeddings": azure_openai_embeddings,
+            "azure_openai_chat": azure_openai_chat,
+            "azure_service_bus_menu": azure_service_bus_menu,
+            "durable_menu_refresh": azure_service_bus_menu and supabase,
             "apify_reviews": apify,
             "apify_menu_discovery": apify_menu_discovery,
             "langsmith": langsmith,
@@ -237,7 +247,7 @@ async def reviews_refresh_endpoint(place_id: str) -> ReviewRefreshJob:
     return await create_review_refresh_job(place_id)
 
 
-@app.post("/api/places/{place_id}/menu-refresh", response_model=MenuRefreshJob)
+@app.post("/api/places/{place_id}/menu-refresh", response_model=MenuRefreshJob, status_code=202)
 async def menu_refresh_endpoint(
     place_id: str,
     restaurant_name: str | None = Query(default=None),
@@ -248,6 +258,14 @@ async def menu_refresh_endpoint(
         return await create_menu_refresh_job(place_id, restaurant_name, website_url, client)
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/menu-refresh-jobs/{job_id}", response_model=MenuRefreshJob)
+async def menu_refresh_job_endpoint(job_id: str) -> MenuRefreshJob:
+    job = await get_menu_refresh_job_service(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Menu refresh job not found.")
+    return job
 
 
 @app.post("/api/places/{place_id}/ask", response_model=AskRestaurantResponse)

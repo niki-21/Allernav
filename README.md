@@ -146,6 +146,7 @@ POST /feedback
 GET  /restaurants/{id}/evidence
 GET  /api/places/{id}/menu
 POST /api/places/{id}/menu-refresh
+GET  /api/menu-refresh-jobs/{job_id}
 GET  /api/places/{id}/reviews
 POST /api/places/{id}/reviews-refresh
 POST /api/restaurants/{id}/search-index
@@ -165,6 +166,17 @@ Menu refresh uses a layered discovery flow:
 - optional web search discovery through Google Programmable Search or SerpAPI for official menu pages, item pages, PDFs, and images
 - Azure Document Intelligence OCR for discovered PDFs and menu images
 - rendered website browsing through Apify Playwright as a bounded fallback; discovered menu/category pages are opened directly and visible load-more controls are expanded
+
+When Supabase and Azure Service Bus are configured, refresh becomes a durable two-stage job. Squarespace menu pages are inspected for numbered image editions, the newest complete edition is queued, and an Azure Function processes up to three images concurrently. The worker uses Azure Document Intelligence for OCR, LangChain with Azure OpenAI structured output for English dish normalization, and the deterministic allergen engine for risk decisions.
+
+```bash
+AZURE_SERVICE_BUS_SEND_CONNECTION_STRING=
+AZURE_SERVICE_BUS_MENU_QUEUE=menu-refresh
+AZURE_OPENAI_CHAT_DEPLOYMENT=
+AZURE_OPENAI_CHAT_API_VERSION=2024-10-21
+```
+
+Run `apps/api/supabase.sql` before enabling the queue so `menu_refresh_jobs` and `menu_document_pages` exist. Deployment commands and RBAC setup are documented in `apps/api/AZURE_MENU_WORKER.md`.
 
 Interactive refreshes use one overall time budget so blocked pages cannot starve later fallbacks. If menu candidates are found but extraction exceeds that budget, the trace reports `needs_background_refresh` instead of treating the source as absent.
 

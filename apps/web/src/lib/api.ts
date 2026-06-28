@@ -127,6 +127,17 @@ export async function refreshPlaceMenu(
   return (await response.json()) as MenuRefreshJob;
 }
 
+export async function fetchMenuRefreshJob(jobId: string): Promise<MenuRefreshJob> {
+  const response = await fetch(`${API_PREFIX}/menu-refresh-jobs/${encodeURIComponent(jobId)}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Menu refresh status failed with status ${response.status}.`);
+  }
+  return (await response.json()) as MenuRefreshJob;
+}
+
 export async function refreshPlaceReviews(placeId: string): Promise<ReviewRefreshJob> {
   const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/reviews-refresh`, {
     method: "POST",

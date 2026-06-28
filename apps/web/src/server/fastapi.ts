@@ -8,6 +8,9 @@ type BackendMenuItem = {
   inferred_risks?: unknown;
   likely_safe_for?: unknown;
   likely_risky_for?: unknown;
+  source_page?: unknown;
+  source_url?: unknown;
+  ocr_confidence?: unknown;
 };
 
 type BackendMenuSection = {
@@ -21,6 +24,8 @@ type BackendPlaceMenu = {
   status?: unknown;
   content_type?: unknown;
   document_url?: unknown;
+  document_urls?: unknown;
+  menu_version?: unknown;
   extraction_method?: unknown;
   page_count?: unknown;
   extraction_confidence?: unknown;
@@ -129,6 +134,9 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
                       ...allergenArray(typedItem.confirmed_allergens),
                       ...allergenArray(typedItem.inferred_risks),
                     ],
+                    source_page: numberValue(typedItem.source_page),
+                    source_url: stringValue(typedItem.source_url),
+                    ocr_confidence: numberValue(typedItem.ocr_confidence),
                   };
                 })
                 .filter((item): item is PlaceMenu["sections"][number]["items"][number] => item !== null)
@@ -148,6 +156,8 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
     status: stringValue(menu.status),
     content_type: stringValue(menu.content_type),
     document_url: stringValue(menu.document_url),
+    document_urls: stringArray(menu.document_urls),
+    menu_version: stringValue(menu.menu_version),
     extraction_method: stringValue(menu.extraction_method),
     page_count: numberValue(menu.page_count),
     extraction_confidence: numberValue(menu.extraction_confidence),

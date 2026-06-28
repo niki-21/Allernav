@@ -7,7 +7,18 @@ from uuid import uuid4
 from .agent_graph import run_dining_safety_graph
 from .azure_search import hybrid_search_menu, index_restaurant_menu
 from .google_places import GooglePlacesClient
-from .menu_ingestion import ingest_menu_from_website, load_menu_source, load_place_menu
+from .menu_ingestion import (
+    common_menu_url_candidates,
+    candidate_url_priority,
+    extract_candidate_menu_urls,
+    fetch_html_url,
+    ingest_menu_from_website,
+    load_menu_source,
+    load_place_menu,
+)
+from .menu_job_queue import MenuRefreshMessage, enqueue_menu_refresh, service_bus_menu_queue_configured
+from .squarespace_menu import MenuImageSet, discover_squarespace_menu_images
+from . import supabase_store
 from .models import (
     AllergyProfile,
     AllergyTag,
@@ -209,6 +220,75 @@ async def create_menu_refresh_job(
         MENU_REFRESH_JOBS[job.id] = job
         return job
 
+    if service_bus_menu_queue_configured() and supabase_store.configured():
+        image_set = _discover_squarespace_image_set(resolved_url)
+        document_urls = image_set.document_urls if image_set else []
+        job = MenuRefreshJob(
+            id=str(uuid4()),
+            place_id=place_id,
+            status="queued",
+            message=(
+                f"Queued OCR for {len(document_urls)} official menu images."
+                if document_urls
+                else "Queued durable menu discovery."
+            ),
+            document_urls=document_urls,
+            total_documents=len(document_urls),
+            processed_documents=0,
+            menu_version=image_set.version if image_set else None,
+            trace=[
+                IngestionTraceStep(
+                    id="source_discovery",
+                    label="Discover menu sources",
+                    status="complete",
+                    detail=(
+                        f"Selected {len(document_urls)} images from menu edition {image_set.version or 'unknown'}."
+                        if image_set
+                        else "The durable worker will continue menu discovery."
+                    ),
+                    provider="squarespace_image_discovery" if image_set else "restaurant_website",
+                    source_url=resolved_url,
+                    item_count=len(document_urls),
+                )
+            ],
+            created_at=now,
+        )
+        MENU_REFRESH_JOBS[job.id] = job
+        if not supabase_store.save_menu_refresh_job(job):
+            failed = job.model_copy(
+                update={
+                    "status": "failed",
+                    "message": "Could not persist the durable menu refresh job in Supabase.",
+                    "completed_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            MENU_REFRESH_JOBS[job.id] = failed
+            return failed
+        try:
+            enqueue_menu_refresh(
+                MenuRefreshMessage(
+                    version=1,
+                    job_id=job.id,
+                    place_id=place_id,
+                    restaurant_name=resolved_name,
+                    website_url=image_set.source_url if image_set else resolved_url,
+                    document_urls=document_urls,
+                    menu_version=image_set.version if image_set else None,
+                )
+            )
+        except RuntimeError as exc:
+            failed = job.model_copy(
+                update={
+                    "status": "failed",
+                    "message": str(exc),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            MENU_REFRESH_JOBS[job.id] = failed
+            supabase_store.save_menu_refresh_job(failed)
+            return failed
+        return job
+
     trace: list[IngestionTraceStep] = []
     source = ingest_menu_from_website(
         restaurant_id=place_id,
@@ -286,6 +366,43 @@ async def create_menu_refresh_job(
     )
     MENU_REFRESH_JOBS[job.id] = job
     return job
+
+
+async def get_menu_refresh_job_service(job_id: str) -> MenuRefreshJob | None:
+    durable = supabase_store.load_menu_refresh_job(job_id)
+    if durable:
+        MENU_REFRESH_JOBS[job_id] = durable
+        return durable
+    return MENU_REFRESH_JOBS.get(job_id)
+
+
+def _discover_squarespace_image_set(website_url: str) -> MenuImageSet | None:
+    homepage = fetch_html_url(website_url)
+    if not homepage:
+        return None
+    image_set = discover_squarespace_menu_images(homepage, website_url)
+    if image_set:
+        return image_set
+    linked_candidates = sorted(
+        set(extract_candidate_menu_urls(homepage, website_url)),
+        key=candidate_url_priority,
+    )
+    candidates = [*linked_candidates]
+    for candidate in common_menu_url_candidates(website_url):
+        if candidate not in candidates:
+            candidates.append(candidate)
+    checked: set[str] = {website_url}
+    for candidate in candidates:
+        if candidate in checked or len(checked) >= 5:
+            continue
+        checked.add(candidate)
+        page = fetch_html_url(candidate)
+        if not page:
+            continue
+        image_set = discover_squarespace_menu_images(page, candidate)
+        if image_set:
+            return image_set
+    return None
 
 
 def merge_review_sources(google_reviews: list[dict], external_reviews: list[PlaceReviewSnippet]) -> list[dict]:

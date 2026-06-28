@@ -152,13 +152,23 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
     status: "complete",
     content_type: "application/pdf",
     document_url: "https://example.com/menu.pdf",
+    document_urls: ["https://example.com/page-1.jpg", "https://example.com/page-2.jpg"],
+    menu_version: "May 2026",
     extraction_method: "azure_document_intelligence_read",
     page_count: 2,
     extraction_confidence: 0.91,
     sections: [
       {
         title: "Crepes",
-        items: [{ name: "Normandie Crepe", description: "Apples and cream" }],
+        items: [
+          {
+            name: "Normandie Crepe",
+            description: "Apples and cream",
+            source_page: 1,
+            source_url: "https://example.com/page-1.jpg",
+            ocr_confidence: 0.91,
+          },
+        ],
       },
     ],
   });
@@ -167,6 +177,9 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
   assert.equal(menu?.extraction_method, "azure_document_intelligence_read");
   assert.equal(menu?.page_count, 2);
   assert.equal(menu?.extraction_confidence, 0.91);
+  assert.equal(menu?.menu_version, "May 2026");
+  assert.equal(menu?.document_urls?.length, 2);
+  assert.equal(menu?.sections[0]?.items[0]?.source_page, 1);
 });
 
 test("getPlaceDetailsService defers Apify reviews even when configured", async () => {

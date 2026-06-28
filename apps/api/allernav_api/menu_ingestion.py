@@ -259,15 +259,18 @@ def save_menu_source(
     status: str = "complete",
     error_message: str | None = None,
     db_path: Path | None = None,
-) -> None:
+    save_local: bool = True,
+) -> bool:
     fetched_at = source.source_timestamp or datetime.now(UTC).isoformat()
-    supabase_store.save_menu_source(
+    remote_saved = supabase_store.save_menu_source(
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
         source=source,
         status=status,
         error_message=error_message,
     )
+    if not save_local:
+        return remote_saved
     with connect(db_path) as connection:
         connection.execute(
             """
@@ -298,6 +301,7 @@ def save_menu_source(
                 source.model_dump_json(),
             ),
         )
+    return True
 
 
 def load_menu_record(restaurant_id: str, db_path: Path | None = None) -> tuple[str | None, MenuSource] | None:
@@ -351,6 +355,8 @@ def load_place_menu(restaurant_id: str, db_path: Path | None = None) -> PlaceMen
         status="complete",
         content_type=source.content_type,
         document_url=source.document_url,
+        document_urls=source.document_urls,
+        menu_version=source.menu_version,
         extraction_method=source.extraction_method,
         page_count=source.page_count,
         extraction_confidence=source.extraction_confidence,
@@ -1104,7 +1110,12 @@ def build_menu_item(name: str, description: str | None = None, price: str | None
     return MenuItem(name=name, description=description, price=clean_text(price))
 
 
-def sanitize_sections(sections: Iterable[MenuSection]) -> list[MenuSection]:
+def sanitize_sections(
+    sections: Iterable[MenuSection],
+    *,
+    max_sections: int = 8,
+    max_items_per_section: int = 30,
+) -> list[MenuSection]:
     cleaned: list[MenuSection] = []
     seen_sections: set[str] = set()
     for section in sections:
@@ -1116,8 +1127,8 @@ def sanitize_sections(sections: Iterable[MenuSection]) -> list[MenuSection]:
         if not items or key in seen_sections:
             continue
         seen_sections.add(key)
-        cleaned.append(MenuSection(title=title, items=items[:30]))
-    return cleaned[:8]
+        cleaned.append(MenuSection(title=title, items=items[:max_items_per_section]))
+    return cleaned[:max_sections]
 
 
 def looks_like_real_menu_item(name: str, description: str | None = None) -> bool:

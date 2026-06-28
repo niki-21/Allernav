@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import unittest
+
+from allernav_api.azure_search import build_index_documents
+from allernav_api.menu_normalization import extract_english_menu_page
+from allernav_api.models import MenuSource, SourceType
+
+
+class MenuNormalizationTests(unittest.TestCase):
+    def test_keeps_only_english_ocr_grounded_dishes(self) -> None:
+        ocr = """
+        APPETIZERS
+        $14.95 CHICKEN SATAY
+        Thai Marinated Chicken Satay with Peanut Sauce
+        ปอเปี๊ยะสด
+        """
+
+        sections = extract_english_menu_page(
+            ocr_text=ocr,
+            source_url="https://images.example/page-1.jpg",
+            source_page=1,
+            ocr_confidence=0.91,
+            invoker=lambda _messages: {
+                "sections": [
+                    {
+                        "title": "Appetizers",
+                        "items": [
+                            {
+                                "name": "Chicken Satay",
+                                "description": "Thai Marinated Chicken Satay with Peanut Sauce",
+                                "price": "$14.95",
+                            },
+                            {"name": "ปอเปี๊ยะสด", "description": None, "price": None},
+                            {"name": "Invented Curry", "description": "Not in OCR", "price": "$99"},
+                        ],
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual([item.name for item in sections[0].items], ["Chicken Satay"])
+        self.assertIn("Peanut Sauce", sections[0].items[0].description or "")
+        self.assertEqual(sections[0].items[0].source_page, 1)
+        documents = build_index_documents(
+            restaurant_id="forever-thai",
+            restaurant_name="Forever Thai",
+            source=MenuSource(
+                source_type=SourceType.OFFICIAL_MENU,
+                source_url="https://www.foreverthaibushwick.com/menu",
+                sections=sections,
+            ),
+        )
+        self.assertIn("peanut", documents[0]["allergens"])
+
+    def test_retries_once_after_invalid_structured_output(self) -> None:
+        responses = iter([{"sections": "invalid"}, {"sections": [{"title": "Mains", "items": []}]}])
+        calls = 0
+
+        def invoke(_messages):  # noqa: ANN202
+            nonlocal calls
+            calls += 1
+            return next(responses)
+
+        result = extract_english_menu_page(
+            ocr_text="MAINS",
+            source_url="https://images.example/page.jpg",
+            source_page=1,
+            ocr_confidence=0.8,
+            invoker=invoke,
+        )
+
+        self.assertEqual(result, [])
+        self.assertEqual(calls, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

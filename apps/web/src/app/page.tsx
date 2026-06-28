@@ -11,7 +11,15 @@ import {
   ALLERGY_PROFILE_STORAGE_KEY,
   DEFAULT_ALLERGENS,
 } from "@/lib/allergens";
-import { analyzeRestaurant, askNearbyPlaces, askRestaurant, fetchPlaceDetails, refreshPlaceMenu, searchPlaces } from "@/lib/api";
+import {
+  analyzeRestaurant,
+  askNearbyPlaces,
+  askRestaurant,
+  fetchMenuRefreshJob,
+  fetchPlaceDetails,
+  refreshPlaceMenu,
+  searchPlaces,
+} from "@/lib/api";
 import { rankPlaces, shouldShowSearchAreaButton } from "@/lib/placeRanking";
 import { applyPlaceDetailError, applyPlaceDetailSuccess, seedPlaceDetailsState } from "@/lib/placeState";
 import type {
@@ -80,11 +88,25 @@ export default function Home() {
       }));
 
       try {
-        const job = await refreshPlaceMenu(details.id, {
+        let job = await refreshPlaceMenu(details.id, {
           placeName: details.name,
           websiteUrl: details.website_uri,
         });
         setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
+        const terminalStatuses = new Set(["complete", "failed", "needs_background_refresh"]);
+        for (let attempt = 0; attempt < 90 && !terminalStatuses.has(job.status); attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          job = await fetchMenuRefreshJob(job.id);
+          setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
+        }
+        if (!terminalStatuses.has(job.status)) {
+          job = {
+            ...job,
+            status: "needs_background_refresh",
+            message: "The durable menu job is still running. Reopen this place shortly to see the completed menu.",
+          };
+          setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
+        }
         const refreshedDetails = await fetchPlaceDetails(details.id, selectedAllergens);
         setDetailStates((current) => {
           const currentState = current[details.id];

@@ -48,7 +48,7 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
         { status: response.status },
       );
     }
-    return NextResponse.json(body);
+    return NextResponse.json(body, { status: response.status });
   } catch (error) {
     return NextResponse.json(
       {

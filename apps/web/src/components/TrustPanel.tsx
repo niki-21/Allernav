@@ -367,6 +367,12 @@ export default function TrustPanel({
                 </span>
               </summary>
               <div className="menu-trace-list">
+                {(menuRefreshJob?.total_documents ?? 0) > 0 && (
+                  <p className="muted-line">
+                    {menuRefreshJob?.processed_documents ?? 0} of {menuRefreshJob?.total_documents ?? 0} menu pages processed
+                    {menuRefreshJob?.menu_version ? ` · ${menuRefreshJob.menu_version}` : ""}
+                  </p>
+                )}
                 {(menuRefreshJob?.trace ?? []).map((step) => (
                   <article key={step.id} className={`menu-trace-step ${step.status}`}>
                     <div>

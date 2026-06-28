@@ -163,6 +163,9 @@ class MenuItem(BaseModel):
     inferred_risks: list[AllergyTag] = Field(default_factory=list)
     unknowns: list[str] = Field(default_factory=list)
     verification_status: str = "inferred"
+    source_page: int | None = Field(default=None, ge=1)
+    source_url: str | None = None
+    ocr_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class MenuSection(BaseModel):
@@ -177,6 +180,8 @@ class PlaceMenu(BaseModel):
     status: str = "missing"
     content_type: str | None = None
     document_url: str | None = None
+    document_urls: list[str] = Field(default_factory=list)
+    menu_version: str | None = None
     extraction_method: str | None = None
     page_count: int | None = Field(default=None, ge=0)
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -192,6 +197,8 @@ class MenuSource(BaseModel):
     sections: list[MenuSection] = Field(default_factory=list)
     content_type: str | None = None
     document_url: str | None = None
+    document_urls: list[str] = Field(default_factory=list)
+    menu_version: str | None = None
     extraction_method: str | None = None
     page_count: int | None = Field(default=None, ge=0)
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -425,6 +432,10 @@ class MenuRefreshJob(BaseModel):
     extraction_method: str | None = None
     page_count: int | None = None
     extraction_confidence: float | None = None
+    document_urls: list[str] = Field(default_factory=list)
+    total_documents: int = Field(default=0, ge=0)
+    processed_documents: int = Field(default=0, ge=0)
+    menu_version: str | None = None
     trace: list[IngestionTraceStep] = Field(default_factory=list)
     created_at: str
     completed_at: str | None = None

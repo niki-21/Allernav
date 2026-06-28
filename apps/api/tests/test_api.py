@@ -211,12 +211,54 @@ class ApiTests(unittest.TestCase):
 
             os.environ.pop("ALLERNAV_MENU_DB", None)
 
-        self.assertEqual(refresh.status_code, 200)
+        self.assertEqual(refresh.status_code, 202)
         self.assertEqual(refresh.json()["status"], "complete")
         self.assertEqual(refresh.json()["trace"][0]["id"], "source_discovery")
         self.assertEqual(refresh.json()["trace"][-1]["id"], "search_index")
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
+
+    def test_menu_refresh_queues_squarespace_image_job_when_azure_is_configured(self) -> None:
+        menu_html = "".join(
+            f'<img data-image="https://images.example/Forever+Thai+Menu+May+2026_Page_{page}.jpg">'
+            for page in range(1, 3)
+        )
+        with patch.dict("os.environ", {"AZURE_SERVICE_BUS_SEND_CONNECTION_STRING": "test-connection"}), patch(
+            "allernav_api.service.supabase_store.configured", return_value=True
+        ), patch(
+            "allernav_api.service.supabase_store.save_menu_refresh_job", return_value=True
+        ), patch(
+            "allernav_api.service.supabase_store.load_menu_refresh_job", return_value=None
+        ), patch(
+            "allernav_api.service.fetch_html_url",
+            side_effect=lambda url: (
+                menu_html
+                if url.endswith("/menu")
+                else '<a href="/menu">Menu</a>'
+                if url.rstrip("/") == "https://www.foreverthaibushwick.com"
+                else None
+            ),
+        ), patch("allernav_api.service.enqueue_menu_refresh") as enqueue:
+            client = TestClient(app)
+            refresh = client.post(
+                "/api/places/forever-thai/menu-refresh",
+                params={
+                    "restaurant_name": "Forever Thai",
+                    "website_url": "https://www.foreverthaibushwick.com/",
+                },
+            )
+            job = client.get(f"/api/menu-refresh-jobs/{refresh.json()['id']}")
+
+        self.assertEqual(refresh.status_code, 202)
+        self.assertEqual(refresh.json()["status"], "queued")
+        self.assertEqual(refresh.json()["total_documents"], 2)
+        self.assertEqual(refresh.json()["menu_version"], "May 2026")
+        self.assertEqual(job.status_code, 200)
+        enqueue.assert_called_once()
+        self.assertEqual(
+            enqueue.call_args.args[0].website_url,
+            "https://www.foreverthaibushwick.com/menu",
+        )
 
     def test_nearby_rag_suggestions_retrieve_stored_menu_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
