@@ -96,8 +96,9 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(discovery.pages), 1)
         self.assertIn("https://restaurant.example/menu", urls)
         self.assertRegex(calls[0][0], r"/actors/apify~playwright-scraper/run-sync-get-dataset-items$")
-        self.assertEqual(calls[0][1]["token"], "test-token")
+        self.assertEqual(calls[0][1], {})
         self.assertEqual(calls[0][2]["startUrls"], [{"url": "https://restaurant.example/"}])
+        self.assertEqual(calls[0][3]["Authorization"], "Bearer test-token")
         self.assertEqual(calls[0][3]["Content-Type"], "application/json")
 
 

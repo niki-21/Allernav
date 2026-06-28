@@ -153,9 +153,12 @@ def discover_rendered_menu_evidence(
     try:
         payload = (requester or default_requester)(
             url,
-            {"token": token},
+            {},
             body,
-            {"Content-Type": "application/json"},
+            {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
             timeout,
         )
     except (httpx.HTTPError, ValueError) as exc:

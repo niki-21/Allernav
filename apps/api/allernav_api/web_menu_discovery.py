@@ -34,6 +34,7 @@ def discover_web_menu_candidates(
     address: str | None = None,
     requester: Requester | None = None,
     time_budget_seconds: float | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[WebMenuCandidate]:
     if not restaurant_name:
         return []
@@ -44,7 +45,12 @@ def discover_web_menu_candidates(
     for query in queries:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        for candidate in search_menu_web(query, requester=requester, deadline=deadline):
+        for candidate in search_menu_web(
+            query,
+            requester=requester,
+            deadline=deadline,
+            diagnostics=diagnostics,
+        ):
             if is_useful_menu_candidate(candidate.url) and candidate.url not in [item.url for item in candidates]:
                 candidates.append(candidate)
         if len(candidates) >= 12:
@@ -84,13 +90,24 @@ def search_menu_web(
     *,
     requester: Requester | None = None,
     deadline: float | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[WebMenuCandidate]:
-    google = search_google_programmable(query, requester=requester, timeout=remaining_request_timeout(deadline))
+    google = search_google_programmable(
+        query,
+        requester=requester,
+        timeout=remaining_request_timeout(deadline),
+        diagnostics=diagnostics,
+    )
     if google:
         return google
     if deadline is not None and time.monotonic() >= deadline:
         return []
-    return search_serpapi(query, requester=requester, timeout=remaining_request_timeout(deadline))
+    return search_serpapi(
+        query,
+        requester=requester,
+        timeout=remaining_request_timeout(deadline),
+        diagnostics=diagnostics,
+    )
 
 
 def search_google_programmable(
@@ -98,6 +115,7 @@ def search_google_programmable(
     *,
     requester: Requester | None = None,
     timeout: float | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[WebMenuCandidate]:
     api_key = os.getenv("GOOGLE_SEARCH_API_KEY", "").strip()
     search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "").strip()
@@ -111,7 +129,13 @@ def search_google_programmable(
         "safe": "active",
     }
     url = f"https://www.googleapis.com/customsearch/v1?{parse.urlencode(params)}"
-    payload = request_json(url, requester=requester, timeout=timeout or search_request_timeout_seconds())
+    payload = request_json(
+        url,
+        requester=requester,
+        timeout=timeout or search_request_timeout_seconds(),
+        provider="Google Programmable Search",
+        diagnostics=diagnostics,
+    )
     if not isinstance(payload, dict):
         return []
     return parse_google_search_candidates(payload)
@@ -122,6 +146,7 @@ def search_serpapi(
     *,
     requester: Requester | None = None,
     timeout: float | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[WebMenuCandidate]:
     api_key = os.getenv("SERPAPI_API_KEY", "").strip()
     if not api_key:
@@ -134,7 +159,13 @@ def search_serpapi(
         "safe": "active",
     }
     url = f"https://serpapi.com/search.json?{parse.urlencode(params)}"
-    payload = request_json(url, requester=requester, timeout=timeout or search_request_timeout_seconds())
+    payload = request_json(
+        url,
+        requester=requester,
+        timeout=timeout or search_request_timeout_seconds(),
+        provider="SerpAPI",
+        diagnostics=diagnostics,
+    )
     if not isinstance(payload, dict):
         return []
     return parse_serpapi_candidates(payload)
@@ -155,16 +186,37 @@ def remaining_request_timeout(deadline: float | None) -> float:
     return max(0.25, min(configured, deadline - time.monotonic()))
 
 
-def request_json(url: str, *, requester: Requester | None = None, timeout: float = 6.0) -> Any:
-    if requester:
-        return requester(url, timeout)
-    req = request.Request(url)
-    req.add_header("User-Agent", "AllerNavMenuDiscovery/1.0")
+def request_json(
+    url: str,
+    *,
+    requester: Requester | None = None,
+    timeout: float = 6.0,
+    provider: str = "Web search",
+    diagnostics: list[str] | None = None,
+) -> Any:
     try:
+        if requester:
+            return requester(url, timeout)
+        req = request.Request(url)
+        req.add_header("User-Agent", "AllerNavMenuDiscovery/1.0")
         with request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+    except error.HTTPError as exc:
+        append_diagnostic(diagnostics, f"{provider} returned HTTP {exc.code}.")
         return None
+    except (error.URLError, TimeoutError) as exc:
+        reason = getattr(exc, "reason", exc)
+        label = "timed out" if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower() else "was unreachable"
+        append_diagnostic(diagnostics, f"{provider} {label}.")
+        return None
+    except (ValueError, json.JSONDecodeError):
+        append_diagnostic(diagnostics, f"{provider} returned invalid JSON.")
+        return None
+
+
+def append_diagnostic(diagnostics: list[str] | None, message: str) -> None:
+    if diagnostics is not None and message not in diagnostics:
+        diagnostics.append(message)
 
 
 def parse_google_search_candidates(payload: dict[str, Any]) -> list[WebMenuCandidate]:

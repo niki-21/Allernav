@@ -99,6 +99,28 @@ class WebMenuDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(candidates[0].url, "https://restaurant.example/items/truffle-burger")
 
+    def test_records_safe_provider_diagnostics_without_request_url(self) -> None:
+        diagnostics: list[str] = []
+
+        def failing_requester(_url: str, _timeout: float):  # noqa: ANN202
+            from urllib.error import HTTPError
+
+            raise HTTPError("https://redacted.invalid", 403, "Forbidden", {}, None)
+
+        with patch.dict(
+            "os.environ",
+            {"GOOGLE_SEARCH_API_KEY": "secret-key", "GOOGLE_SEARCH_ENGINE_ID": "engine-id"},
+        ):
+            discover_web_menu_candidates(
+                restaurant_name="Restaurant",
+                website_url="https://restaurant.example/",
+                requester=failing_requester,
+                diagnostics=diagnostics,
+            )
+
+        self.assertEqual(diagnostics, ["Google Programmable Search returned HTTP 403."])
+        self.assertNotIn("secret-key", " ".join(diagnostics))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -480,12 +480,14 @@ def ingest_menu_from_website(
 
     search_started_at = time.monotonic()
     search_budget = min(12.0, remaining_seconds(deadline))
+    search_diagnostics: list[str] = []
     web_candidates = (
         discover_web_menu_candidates(
             restaurant_name=restaurant_name,
             website_url=website_url,
             address=restaurant_address,
             time_budget_seconds=search_budget,
+            diagnostics=search_diagnostics,
         )
         if search_budget >= 1.0
         else []
@@ -515,6 +517,7 @@ def ingest_menu_from_website(
             if web_item_count
             else (
                 f"Web discovery found {len(web_candidate_urls)} candidate URL{'s' if len(web_candidate_urls) != 1 else ''}, but none produced reliable dish-level items."
+                + (f" {' '.join(search_diagnostics)}" if search_diagnostics else "")
                 if web_menu_discovery_configured()
                 else "Google Programmable Search or SerpAPI is not configured on the API deployment."
             )
