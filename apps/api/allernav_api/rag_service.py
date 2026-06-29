@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 from urllib import error, request
 
 from .azure_search import detect_allergens_in_text, hybrid_search_menu
 from .google_places import GooglePlacesClient
-from .langchain_tracing import ainvoke_traced_runnable, invoke_traced_runnable, update_current_trace_metadata
+from .langchain_tracing import (
+    ainvoke_traced_runnable,
+    invoke_traced_runnable,
+    langchain_run_config,
+    update_current_trace_metadata,
+)
 from .menu_ingestion import load_menu_source
 from .models import (
     AllergyTag,
@@ -258,8 +264,19 @@ async def generate_nearby_answer(
     missing_information: list[str],
     questions: list[str],
 ) -> str:
+    metadata = explanation_trace_metadata(payload, suggestions, evidence)
+
     async def explain(_input: dict[str, str]) -> str:
-        llm_answer = generate_gemini_answer(payload, suggestions, evidence, missing_information, questions)
+        llm_answer = await generate_azure_openai_answer(
+            payload,
+            suggestions,
+            evidence,
+            missing_information,
+            questions,
+            metadata=metadata,
+        )
+        if not llm_answer:
+            llm_answer = generate_gemini_answer(payload, suggestions, evidence, missing_information, questions)
         answer = llm_answer or deterministic_answer(payload, suggestions, missing_information, questions)
         update_current_trace_metadata(
             retrieval_mode="hybrid_keyword_semantic",
@@ -272,15 +289,71 @@ async def generate_nearby_answer(
         name="AllerNav RAG Explanation",
         value={"question": payload.question},
         func=explain,
-        metadata={
-            "restaurant_id": suggestions[0].place.id if len(suggestions) == 1 else None,
-            "source_url": evidence[0].source_url if evidence else None,
-            "item_count": sum(suggestion.menu_item_count for suggestion in suggestions),
-            "retrieval_mode": "hybrid_keyword_semantic",
-            "allergens": [allergen.value for allergen in payload.allergens],
-            "safety_gate": "verify_or_abstain",
-        },
+        metadata=metadata,
     )
+
+
+def azure_openai_chat_configured() -> bool:
+    return all(
+        os.getenv(name, "").strip()
+        for name in (
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_CHAT_DEPLOYMENT",
+            "AZURE_OPENAI_CHAT_API_VERSION",
+        )
+    )
+
+
+def explanation_trace_metadata(
+    payload: NearbySuggestionRequest,
+    suggestions: list[NearbyPlaceSuggestion],
+    evidence: list[HybridSearchResult],
+) -> dict[str, Any]:
+    return {
+        "restaurant_id": suggestions[0].place.id if len(suggestions) == 1 else None,
+        "source_url": evidence[0].source_url if evidence else None,
+        "item_count": sum(suggestion.menu_item_count for suggestion in suggestions),
+        "retrieval_mode": "hybrid_keyword_semantic",
+        "allergens": [allergen.value for allergen in payload.allergens],
+        "safety_gate": "verify_or_abstain",
+    }
+
+
+async def generate_azure_openai_answer(
+    payload: NearbySuggestionRequest,
+    suggestions: list[NearbyPlaceSuggestion],
+    evidence: list[HybridSearchResult],
+    missing_information: list[str],
+    questions: list[str],
+    *,
+    metadata: dict[str, Any],
+) -> str | None:
+    if not azure_openai_chat_configured() or not suggestions:
+        return None
+    try:
+        from langchain_openai import AzureChatOpenAI
+
+        model = AzureChatOpenAI(
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "").strip(),
+            api_key=os.getenv("AZURE_OPENAI_API_KEY", "").strip(),
+            azure_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT", "").strip(),
+            api_version=os.getenv("AZURE_OPENAI_CHAT_API_VERSION", "").strip(),
+            temperature=0.2,
+            max_retries=1,
+            timeout=14,
+        )
+        response = await model.ainvoke(
+            explanation_messages(payload, suggestions, evidence, missing_information, questions),
+            config=langchain_run_config(
+                name="AllerNav Azure OpenAI RAG Explanation",
+                tags=["allernav", "rag", "azure-openai"],
+                metadata=metadata,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - provider failure must preserve the fallback chain
+        return None
+    return clean_llm_answer(extract_langchain_text(response))
 
 
 @traceable(name="Gemini Nearby RAG Explanation", run_type="llm")
@@ -296,11 +369,44 @@ def generate_gemini_answer(
         return None
 
     model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
-    prompt = {
+    messages = explanation_messages(payload, suggestions, evidence, missing_information, questions)
+    req = request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        method="POST",
+        data=json.dumps(
+            {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": f"{messages[0][1]}\n\n{messages[1][1]}"}],
+                    }
+                ],
+                "generationConfig": {"temperature": 0.2},
+            }
+        ).encode("utf-8"),
+    )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("x-goog-api-key", api_key)
+    try:
+        with request.urlopen(req, timeout=14) as response:
+            payload_json = json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
+    except (error.HTTPError, error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        return None
+    return clean_llm_answer(extract_gemini_text(payload_json))
+
+
+def explanation_prompt(
+    payload: NearbySuggestionRequest,
+    suggestions: list[NearbyPlaceSuggestion],
+    evidence: list[HybridSearchResult],
+    missing_information: list[str],
+    questions: list[str],
+) -> dict[str, Any]:
+    return {
         "task": "Suggest nearby restaurants to evaluate for allergy-aware dining decision support.",
         "rules": [
-            "Never claim a place or dish is safe.",
-            "Use cautious language: lower-risk candidate, verify, ask staff, insufficient evidence.",
+            "Never use the word safe or claim that a place or dish has no allergy risk.",
+            "Use cautious language: possible lower-risk, needs verification, ask staff, insufficient evidence.",
             "Use menu evidence as stronger evidence than reviews.",
             "Cite evidence ids like [E1] when discussing menu facts.",
             "Do not invent menu items, ingredients, policies, or reviews.",
@@ -336,37 +442,38 @@ def generate_gemini_answer(
         "recommended_questions": questions,
         "output": "Maximum 80 words. One short paragraph and, only when useful, up to 2 concise bullets. No JSON.",
     }
-    req = request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        method="POST",
-        data=json.dumps(
-            {
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {
-                                "text": (
-                                    "You are AllerNav, an evidence-backed dining decision-support assistant. "
-                                    "Answer cautiously and cite only provided evidence.\n\n"
-                                    + json.dumps(prompt)
-                                )
-                            }
-                        ],
-                    }
-                ],
-                "generationConfig": {"temperature": 0.2},
-            }
-        ).encode("utf-8"),
-    )
-    req.add_header("Content-Type", "application/json")
-    req.add_header("x-goog-api-key", api_key)
-    try:
-        with request.urlopen(req, timeout=14) as response:
-            payload_json = json.loads(response.read().decode("utf-8", errors="ignore") or "{}")
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
-        return None
-    return clean_llm_answer(extract_gemini_text(payload_json))
+
+
+def explanation_messages(
+    payload: NearbySuggestionRequest,
+    suggestions: list[NearbyPlaceSuggestion],
+    evidence: list[HybridSearchResult],
+    missing_information: list[str],
+    questions: list[str],
+) -> list[tuple[str, str]]:
+    prompt = explanation_prompt(payload, suggestions, evidence, missing_information, questions)
+    return [
+        (
+            "system",
+            "You are AllerNav, an evidence-backed dining decision-support assistant. "
+            "Follow the supplied safety rules and cite only supplied evidence ids.",
+        ),
+        ("human", json.dumps(prompt)),
+    ]
+
+
+def extract_langchain_text(response: Any) -> str | None:
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content.strip() or None
+    if isinstance(content, list):
+        parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+        joined = "".join(parts).strip()
+        return joined or None
+    return None
 
 
 def extract_gemini_text(payload: dict[str, Any]) -> str | None:
@@ -389,10 +496,8 @@ def extract_gemini_text(payload: dict[str, Any]) -> str | None:
 def clean_llm_answer(answer: str | None) -> str | None:
     if not answer:
         return None
-    blocked = ["definitely safe", "completely safe", "guaranteed safe", "is safe to eat", "are safe to eat"]
     cleaned = answer.strip()
-    lowered = cleaned.lower()
-    if any(phrase in lowered for phrase in blocked):
+    if re.search(r"\bsafe\b", cleaned, flags=re.IGNORECASE):
         return None
     return cleaned
 
@@ -419,7 +524,7 @@ def deterministic_answer(
             f"Ask staff: {questions[0]}"
         )
 
-    lines = [f"For {allergen_text}, use these as verification leads, not safe choices:"]
+    lines = [f"For {allergen_text}, use these as verification leads, not verified choices:"]
     for suggestion in suggestions[:3]:
         evidence_count = len(suggestion.evidence)
         if evidence_count > 0:

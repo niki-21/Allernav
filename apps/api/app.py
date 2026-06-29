@@ -34,7 +34,7 @@ from allernav_api.models import (
     SearchResponse,
     UserProfileResponse,
 )
-from allernav_api.rag_service import suggest_nearby_places_service
+from allernav_api.rag_service import azure_openai_chat_configured, suggest_nearby_places_service
 from allernav_api.agent_service import (
     analyze_menu_service,
     analyze_restaurant_service,
@@ -112,11 +112,7 @@ def health() -> dict[str, object]:
         and os.getenv("AZURE_OPENAI_API_KEY")
         and os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
     )
-    azure_openai_chat = bool(
-        os.getenv("AZURE_OPENAI_ENDPOINT")
-        and os.getenv("AZURE_OPENAI_API_KEY")
-        and os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
-    )
+    azure_openai_chat = azure_openai_chat_configured()
     azure_service_bus_menu = bool(os.getenv("AZURE_SERVICE_BUS_SEND_CONNECTION_STRING"))
     apify = bool(os.getenv("APIFY_TOKEN"))
     apify_menu_discovery = apify and os.getenv("APIFY_MENU_DISCOVERY_ENABLED", "true").strip().lower() not in {

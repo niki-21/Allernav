@@ -5,21 +5,31 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from allernav_api.models import (
     AllergyTag,
     IngestionTraceStep,
+    HybridSearchResult,
     LatLng,
     MenuRefreshJob,
     NearbySuggestionRequest,
+    NearbyPlaceSuggestion,
+    PlaceListItem,
     PlaceReviewSnippet,
     SearchRequest,
 )
 from allernav_api.models import AllergyProfile, AnalyzeMenuRequest, MenuItem, MenuSection, MenuSource, SourceType
 from allernav_api.agent_service import analyze_menu_service
 from allernav_api.menu_ingestion import save_menu_source
-from allernav_api.rag_service import restaurant_search_query, suggest_nearby_places_service
+from allernav_api.rag_service import (
+    clean_llm_answer,
+    generate_azure_openai_answer,
+    generate_nearby_answer,
+    restaurant_search_query,
+    suggest_nearby_places_service,
+)
 from fastapi.testclient import TestClient
 from main import allowed_origins
 from app import app
@@ -63,6 +73,121 @@ class FakePlacesClient:
 
 
 class ApiTests(unittest.TestCase):
+    def rag_explanation_inputs(self):  # noqa: ANN201
+        payload = NearbySuggestionRequest(
+            question="Which dish should I ask about?",
+            allergens=[AllergyTag.PEANUT],
+        )
+        evidence = [
+            HybridSearchResult(
+                id="dish-1",
+                restaurant_id="alpha",
+                restaurant_name="Alpha Cafe",
+                dish_name="Tomato Rice Bowl",
+                source_type=SourceType.RESTAURANT_WEBSITE,
+                source_url="https://example.com/menu",
+                raw_text="Tomato Rice Bowl - rice, tomato, greens",
+                citation_label="Alpha Cafe menu",
+                citation_text="Tomato Rice Bowl - rice, tomato, greens",
+            )
+        ]
+        suggestions = [
+            NearbyPlaceSuggestion(
+                place=PlaceListItem(
+                    id="alpha",
+                    name="Alpha Cafe",
+                    location=LatLng(lat=38.9, lng=-77.0),
+                ),
+                confidence=0.6,
+                menu_item_count=1,
+                evidence=evidence,
+                risk_note="Ingredient and preparation details need verification.",
+            )
+        ]
+        return payload, suggestions, evidence, ["Cross-contact handling is unknown."], ["Ask staff about prep."]
+
+    def test_azure_openai_chat_explanation_uses_langchain_trace_config(self) -> None:
+        payload, suggestions, evidence, missing, questions = self.rag_explanation_inputs()
+        metadata = {
+            "restaurant_id": "alpha",
+            "source_url": "https://example.com/menu",
+            "item_count": 1,
+            "retrieval_mode": "hybrid_keyword_semantic",
+            "allergens": ["peanut"],
+            "safety_gate": "verify_or_abstain",
+        }
+        env = {
+            "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com",
+            "AZURE_OPENAI_API_KEY": "test-key",
+            "AZURE_OPENAI_CHAT_DEPLOYMENT": "test-chat",
+            "AZURE_OPENAI_CHAT_API_VERSION": "2024-10-21",
+        }
+        chat_cls = MagicMock()
+        langchain_openai = ModuleType("langchain_openai")
+        langchain_openai.AzureChatOpenAI = chat_cls
+        with patch.dict("os.environ", env, clear=True), patch.dict(
+            "sys.modules", {"langchain_openai": langchain_openai}
+        ):
+            chat_cls.return_value.ainvoke = AsyncMock(
+                return_value=SimpleNamespace(content="Possible lower-risk option; needs verification [E1].")
+            )
+            answer = asyncio.run(
+                generate_azure_openai_answer(
+                    payload,
+                    suggestions,
+                    evidence,
+                    missing,
+                    questions,
+                    metadata=metadata,
+                )
+            )
+
+        self.assertEqual(answer, "Possible lower-risk option; needs verification [E1].")
+        config = chat_cls.return_value.ainvoke.await_args.kwargs["config"]
+        self.assertEqual(config["run_name"], "AllerNav Azure OpenAI RAG Explanation")
+        self.assertEqual(config["tags"], ["allernav", "rag", "azure-openai"])
+        self.assertEqual(config["metadata"], metadata)
+
+    def test_rag_explanation_falls_back_to_gemini(self) -> None:
+        payload, suggestions, evidence, missing, questions = self.rag_explanation_inputs()
+        with patch(
+            "allernav_api.rag_service.generate_azure_openai_answer",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "allernav_api.rag_service.generate_gemini_answer",
+            return_value="Needs verification from staff [E1].",
+        ) as gemini:
+            answer = asyncio.run(generate_nearby_answer(payload, suggestions, evidence, missing, questions))
+
+        self.assertEqual(answer, "Needs verification from staff [E1].")
+        gemini.assert_called_once()
+
+    def test_rag_explanation_falls_back_to_deterministic_answer(self) -> None:
+        payload, suggestions, evidence, missing, questions = self.rag_explanation_inputs()
+        with patch(
+            "allernav_api.rag_service.generate_azure_openai_answer",
+            new=AsyncMock(return_value=None),
+        ), patch("allernav_api.rag_service.generate_gemini_answer", return_value=None):
+            answer = asyncio.run(generate_nearby_answer(payload, suggestions, evidence, missing, questions))
+
+        self.assertIn("verification leads", answer)
+        self.assertNotIn("safe", answer.lower())
+
+    def test_llm_safety_filter_rejects_safe_language(self) -> None:
+        self.assertIsNone(clean_llm_answer("This dish is safe for a peanut allergy."))
+        self.assertEqual(clean_llm_answer("This dish needs verification."), "This dish needs verification.")
+
+    def test_health_requires_complete_azure_chat_configuration(self) -> None:
+        base = {
+            "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com",
+            "AZURE_OPENAI_API_KEY": "test-key",
+            "AZURE_OPENAI_CHAT_DEPLOYMENT": "test-chat",
+        }
+        with patch.dict("os.environ", base, clear=True):
+            self.assertFalse(TestClient(app).get("/health").json()["environment"]["azure_openai_chat"])
+        with patch.dict("os.environ", {**base, "AZURE_OPENAI_CHAT_API_VERSION": "2024-10-21"}, clear=True):
+            self.assertTrue(TestClient(app).get("/health").json()["environment"]["azure_openai_chat"])
+
     def test_menu_refresh_mode_defaults_and_local_override(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(menu_refresh_mode(), "auto")

@@ -8,6 +8,19 @@ InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
 
 
+def langchain_run_config(
+    *,
+    name: str,
+    metadata: dict[str, Any],
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "run_name": name,
+        "tags": tags or ["allernav", "rag"],
+        "metadata": metadata,
+    }
+
+
 def invoke_traced_runnable(
     *,
     name: str,
@@ -20,10 +33,7 @@ def invoke_traced_runnable(
     except ImportError:
         return func(value)
     runnable = RunnableLambda(func)
-    return runnable.invoke(
-        value,
-        config={"run_name": name, "tags": ["allernav", "rag"], "metadata": metadata},
-    )
+    return runnable.invoke(value, config=langchain_run_config(name=name, metadata=metadata))
 
 
 async def ainvoke_traced_runnable(
@@ -38,10 +48,7 @@ async def ainvoke_traced_runnable(
     except ImportError:
         return await func(value)
     runnable = RunnableLambda(func)
-    return await runnable.ainvoke(
-        value,
-        config={"run_name": name, "tags": ["allernav", "rag"], "metadata": metadata},
-    )
+    return await runnable.ainvoke(value, config=langchain_run_config(name=name, metadata=metadata))
 
 
 def update_current_trace_metadata(**metadata: Any) -> None:
