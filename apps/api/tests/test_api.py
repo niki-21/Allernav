@@ -201,7 +201,9 @@ class ApiTests(unittest.TestCase):
                 )
                 return source
 
-            with patch("allernav_api.service.ingest_menu_from_website", side_effect=fake_ingest):
+            with patch("allernav_api.service.ingest_menu_from_website", side_effect=fake_ingest), patch(
+                "allernav_api.service.MENU_INDEX_EXECUTOR.submit"
+            ) as submit_index, patch("allernav_api.service.index_restaurant_menu") as inline_index:
                 client = TestClient(app)
                 refresh = client.post(
                     "/api/places/alpha/menu-refresh",
@@ -213,8 +215,12 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(refresh.status_code, 202)
         self.assertEqual(refresh.json()["status"], "complete")
+        self.assertEqual(refresh.json()["indexing_status"], "pending")
         self.assertEqual(refresh.json()["trace"][0]["id"], "source_discovery")
         self.assertEqual(refresh.json()["trace"][-1]["id"], "search_index")
+        self.assertEqual(refresh.json()["trace"][-1]["status"], "pending")
+        submit_index.assert_called_once()
+        inline_index.assert_not_called()
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
 

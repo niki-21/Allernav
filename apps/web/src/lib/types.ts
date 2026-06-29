@@ -168,6 +168,7 @@ export interface MenuRefreshJob {
   total_documents?: number;
   processed_documents?: number;
   menu_version?: string | null;
+  indexing_status?: "pending" | "running" | "complete" | "failed" | "skipped" | null;
   trace: IngestionTraceStep[];
   created_at: string;
   completed_at?: string | null;

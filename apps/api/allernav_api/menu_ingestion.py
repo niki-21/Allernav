@@ -261,6 +261,10 @@ def save_menu_source(
     db_path: Path | None = None,
     save_local: bool = True,
 ) -> bool:
+    has_grounded_items = any(section.items for section in sanitize_sections(source.sections))
+    if (status != "complete" or not has_grounded_items) and load_menu_record(restaurant_id, db_path):
+        return False
+
     fetched_at = source.source_timestamp or datetime.now(UTC).isoformat()
     remote_saved = supabase_store.save_menu_source(
         restaurant_id=restaurant_id,

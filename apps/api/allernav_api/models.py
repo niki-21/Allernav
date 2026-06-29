@@ -436,6 +436,7 @@ class MenuRefreshJob(BaseModel):
     total_documents: int = Field(default=0, ge=0)
     processed_documents: int = Field(default=0, ge=0)
     menu_version: str | None = None
+    indexing_status: str | None = None
     trace: list[IngestionTraceStep] = Field(default_factory=list)
     created_at: str
     completed_at: str | None = None

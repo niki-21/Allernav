@@ -119,6 +119,22 @@ export default function Home() {
             agent_recommendation: currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
           });
         });
+        if (job.status === "complete" && ["pending", "running"].includes(job.indexing_status ?? "")) {
+          void (async () => {
+            for (let attempt = 0; attempt < 30; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+              try {
+                const indexJob = await fetchMenuRefreshJob(job.id);
+                setMenuRefreshJobs((current) => ({ ...current, [details.id]: indexJob }));
+                if (!["pending", "running"].includes(indexJob.indexing_status ?? "")) {
+                  break;
+                }
+              } catch {
+                break;
+              }
+            }
+          })();
+        }
       } catch (error) {
         const completedAt = new Date().toISOString();
         const message = menuScanErrorMessage(error);

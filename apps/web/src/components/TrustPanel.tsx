@@ -222,6 +222,18 @@ export default function TrustPanel({
   const menuEvidenceLine = [extractionMethod, extractionConfidence, data.menu?.page_count ? `${data.menu.page_count} page${data.menu.page_count === 1 ? "" : "s"}` : null]
     .filter(Boolean)
     .join(" · ");
+  const indexingStatus =
+    menuRefreshJob?.indexing_status ??
+    menuRefreshJob?.trace.find((step) => step.id === "search_index")?.status ??
+    null;
+  const ragStatus =
+    indexingStatus === "complete"
+      ? { className: "rag-ready", label: "RAG ready" }
+      : indexingStatus === "pending" || indexingStatus === "running"
+        ? { className: "rag-updating", label: "RAG index updating" }
+        : indexingStatus === "failed"
+          ? { className: "rag-unavailable", label: "RAG index unavailable" }
+          : { className: "rag-mode", label: "RAG: hybrid" };
   const ratingLine = [
     data.rating ? `${data.rating.toFixed(1)} on Google` : null,
     data.user_rating_count ? `${data.user_rating_count.toLocaleString()} reviews` : null,
@@ -245,7 +257,7 @@ export default function TrustPanel({
             {menuItemCount > 0 ? "Menu found" : "Menu pending"}
           </span>
           <span className="needs-verification">Needs verification</span>
-          <span className="rag-mode">RAG: hybrid</span>
+          <span className={ragStatus.className}>{ragStatus.label}</span>
         </div>
       </div>
 
@@ -445,8 +457,8 @@ export default function TrustPanel({
             >
               <summary>
                 <strong>Menu RAG trace</strong>
-                <span className={`trace-status ${isMenuLoading ? "running" : menuRefreshJob?.status ?? "idle"}`}>
-                  {isMenuLoading ? "Running" : menuRefreshJob?.status ?? "Idle"}
+                <span className={`trace-status ${isMenuLoading ? "running" : indexingStatus ?? menuRefreshJob?.status ?? "idle"}`}>
+                  {isMenuLoading ? "Running" : indexingStatus ?? menuRefreshJob?.status ?? "Idle"}
                 </span>
               </summary>
               <div className="menu-trace-list">

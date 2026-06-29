@@ -34,20 +34,27 @@ def search_api_version() -> str:
     return os.getenv("AZURE_SEARCH_API_VERSION", "2026-04-01")
 
 
+def embedding_batch_size() -> int:
+    try:
+        return max(1, min(128, int(os.getenv("AZURE_OPENAI_EMBEDDING_BATCH_SIZE", "16"))))
+    except ValueError:
+        return 16
+
+
 def build_index_documents(
     *,
     restaurant_id: str,
     restaurant_name: str | None,
     source: MenuSource,
     location: str | None = None,
+    include_embeddings: bool = True,
+    embedding_client: AzureOpenAIEmbeddingClient | None = None,
 ) -> list[dict[str, Any]]:
     documents: list[dict[str, Any]] = []
     for section in source.sections:
         for item in section.items:
             raw_text = item_text(item)
             matched_allergens = detect_allergens_in_text(raw_text)
-            embedding = AzureOpenAIEmbeddingClient().embed_text(raw_text) if configured_embeddings() else []
-
             documents.append(
                 {
                     "id": document_id(restaurant_id, source, section.title, item.name),
@@ -66,9 +73,17 @@ def build_index_documents(
                         source.extraction_confidence if source.extraction_confidence is not None else source.reliability,
                     ),
                     "raw_text": raw_text,
-                    "embedding": embedding,
+                    "embedding": [],
                 }
             )
+    if include_embeddings and configured_embeddings() and documents:
+        client = embedding_client or AzureOpenAIEmbeddingClient()
+        batch_size = embedding_batch_size()
+        for start in range(0, len(documents), batch_size):
+            batch = documents[start : start + batch_size]
+            embeddings = client.embed_texts([str(document["raw_text"]) for document in batch])
+            for document, embedding in zip(batch, embeddings, strict=False):
+                document["embedding"] = embedding
     return documents
 
 
@@ -158,6 +173,7 @@ def local_hybrid_search(payload: HybridSearchRequest) -> HybridSearchResponse:
         restaurant_id=payload.restaurant_id,
         restaurant_name=None,
         source=source,
+        include_embeddings=False,
     )
     scored_results: list[tuple[float, HybridSearchResult]] = []
     keyword_query = build_keyword_query(payload.query, payload.allergens).lower()

@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import supabase_store
-from .azure_search import index_restaurant_menu
 from .document_intelligence import DocumentExtraction, extract_document_from_url
+from .menu_indexing import finish_menu_index
 from .menu_ingestion import ingest_menu_from_website, sanitize_sections, save_menu_source, summarize_menu_text
 from .menu_job_queue import MenuRefreshMessage
 from .menu_normalization import extract_english_menu_page
@@ -27,6 +27,8 @@ def process_menu_refresh_message(
 ) -> MenuRefreshJob:
     existing = supabase_store.load_menu_refresh_job(message.job_id)
     if existing and existing.status == "complete":
+        if existing.indexing_status in {"pending", "failed"}:
+            return finish_menu_index(existing, persist=_save_job)
         return existing
     job = existing or _new_job(message)
     try:
@@ -200,24 +202,10 @@ def _process_image_menu(
     if not stored:
         raise RuntimeError("Could not persist the completed menu in Supabase.")
     item_count = sum(len(section.items) for section in sections)
-    job = _transition(
-        job,
-        status="indexing",
-        message=f"Stored {item_count} grounded dishes; indexing retrieval evidence.",
-        trace=IngestionTraceStep(
-            id="normalization",
-            label="Structure OCR evidence",
-            status="complete",
-            detail=f"LangChain structured extraction produced {item_count} grounded English dishes.",
-            provider="langchain_azure_openai",
-            item_count=item_count,
-        ),
-    )
-    index_result = index_restaurant_menu(message.place_id)
     completed = job.model_copy(
         update={
             "status": "complete",
-            "message": f"Captured {item_count} menu items from {len(extractions)} official menu pages.",
+            "message": f"Captured {item_count} menu items; RAG indexing is continuing in the background.",
             "item_count": item_count,
             "source_url": source.source_url,
             "content_type": source.content_type,
@@ -225,22 +213,43 @@ def _process_image_menu(
             "page_count": source.page_count,
             "extraction_confidence": source.extraction_confidence,
             "processed_documents": len(extractions),
+            "indexing_status": "pending",
             "completed_at": datetime.now(UTC).isoformat(),
             "trace": _upsert_trace(
-                job.trace,
+                _upsert_trace(
+                    _upsert_trace(
+                        job.trace,
+                        IngestionTraceStep(
+                            id="normalization",
+                            label="Structure OCR evidence",
+                            status="complete",
+                            detail=f"LangChain structured extraction produced {item_count} grounded English dishes.",
+                            provider="langchain_azure_openai",
+                            item_count=item_count,
+                        ),
+                    ),
+                    IngestionTraceStep(
+                        id="menu_extracted",
+                        label="Menu extracted",
+                        status="complete",
+                        detail=f"Published {item_count} dish-level menu items for immediate review.",
+                        provider=source.extraction_method,
+                        item_count=item_count,
+                    ),
+                ),
                 IngestionTraceStep(
                     id="search_index",
                     label="Index menu evidence",
-                    status="complete" if index_result.status == "indexed" else "skipped",
-                    detail=f"Azure AI Search returned {index_result.status.replace('_', ' ')}.",
+                    status="pending",
+                    detail="Menu extracted and published; the RAG index is updating.",
                     provider="azure_ai_search",
-                    item_count=index_result.indexed_documents,
+                    item_count=item_count,
                 ),
             ),
         }
     )
     _save_job(completed)
-    return completed
+    return finish_menu_index(completed, persist=_save_job)
 
 
 def _process_discovery_fallback(job: MenuRefreshJob, message: MenuRefreshMessage) -> MenuRefreshJob:
@@ -254,33 +263,43 @@ def _process_discovery_fallback(job: MenuRefreshJob, message: MenuRefreshMessage
     item_count = sum(len(section.items) for section in source.sections)
     if not item_count:
         raise RuntimeError("No reliable dish-level menu items were extracted.")
-    index_result = index_restaurant_menu(message.place_id)
     completed = job.model_copy(
         update={
             "status": "complete",
-            "message": f"Captured {item_count} menu items from {source.source_url}.",
+            "message": f"Captured {item_count} menu items; RAG indexing is continuing in the background.",
             "item_count": item_count,
             "source_url": source.source_url,
             "content_type": source.content_type,
             "extraction_method": source.extraction_method,
             "page_count": source.page_count,
             "extraction_confidence": source.extraction_confidence,
+            "indexing_status": "pending",
             "completed_at": datetime.now(UTC).isoformat(),
             "trace": _upsert_trace(
-                job.trace,
+                _upsert_trace(
+                    job.trace,
+                    IngestionTraceStep(
+                        id="menu_extracted",
+                        label="Menu extracted",
+                        status="complete",
+                        detail=f"Published {item_count} dish-level menu items for immediate review.",
+                        provider=source.extraction_method or "menu_ingestion",
+                        item_count=item_count,
+                    ),
+                ),
                 IngestionTraceStep(
                     id="search_index",
                     label="Index menu evidence",
-                    status="complete" if index_result.status == "indexed" else "skipped",
-                    detail=f"Azure AI Search returned {index_result.status.replace('_', ' ')}.",
+                    status="pending",
+                    detail="Menu extracted and published; the RAG index is updating.",
                     provider="azure_ai_search",
-                    item_count=index_result.indexed_documents,
+                    item_count=item_count,
                 ),
             ),
         }
     )
     _save_job(completed)
-    return completed
+    return finish_menu_index(completed, persist=_save_job)
 
 
 def _new_job(message: MenuRefreshMessage) -> MenuRefreshJob:

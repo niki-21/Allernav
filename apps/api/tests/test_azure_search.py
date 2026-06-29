@@ -36,6 +36,7 @@ class AzureSearchTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
         os.environ.pop("ALLERNAV_MENU_DB", None)
+        os.environ.pop("AZURE_OPENAI_EMBEDDING_BATCH_SIZE", None)
 
     def test_build_index_documents_contains_required_fields(self) -> None:
         source = MenuSource(
@@ -60,6 +61,41 @@ class AzureSearchTests(unittest.TestCase):
         self.assertIn("peanut", document["allergens"])
         self.assertIn("sesame", document["allergens"])
         self.assertIn("embedding", document)
+
+    def test_build_index_documents_reuses_client_and_batches_embeddings(self) -> None:
+        os.environ["AZURE_OPENAI_ENDPOINT"] = "https://example.openai.azure.com"
+        os.environ["AZURE_OPENAI_API_KEY"] = "test-key"
+        os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] = "text-embedding-3-small"
+        os.environ["AZURE_OPENAI_EMBEDDING_BATCH_SIZE"] = "2"
+        calls: list[list[str]] = []
+
+        class FakeEmbeddingClient:
+            def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                calls.append(texts)
+                return [[float(len(text))] for text in texts]
+
+        source = MenuSource(
+            source_type=SourceType.OFFICIAL_MENU,
+            source_url="https://example.com/menu",
+            sections=[
+                MenuSection(
+                    title="Dinner",
+                    items=[MenuItem(name=f"Dish {index}", description="Rice and vegetables") for index in range(5)],
+                )
+            ],
+        )
+
+        fake_client = FakeEmbeddingClient()
+        with patch("allernav_api.azure_search.AzureOpenAIEmbeddingClient", return_value=fake_client) as client_type:
+            documents = build_index_documents(
+                restaurant_id="alpha",
+                restaurant_name="Alpha",
+                source=source,
+            )
+
+        client_type.assert_called_once_with()
+        self.assertEqual([len(batch) for batch in calls], [2, 2, 1])
+        self.assertTrue(all(document["embedding"] for document in documents))
 
     def test_exact_allergen_keyword_detection_finds_menu_terms(self) -> None:
         detected = detect_allergens_in_text("tahini cream sauce with soy sauce and peanut garnish")

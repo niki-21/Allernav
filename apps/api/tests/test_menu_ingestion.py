@@ -164,6 +164,43 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.sections[0].items[0].name, "Chicken Alfredo")
         self.assertIn("cream sauce", source.sections[0].items[0].description or "")
 
+    def test_failed_refresh_does_not_replace_complete_stored_menu(self) -> None:
+        complete_source = MenuSource(
+            source_type=SourceType.OFFICIAL_MENU,
+            source_url="https://example.com/menu",
+            reliability=0.8,
+            sections=[MenuSection(title="Dinner", items=[MenuItem(name="Rice Bowl", description="Rice and greens")])],
+        )
+        self.assertTrue(
+            save_menu_source(
+                restaurant_id="durable-menu",
+                restaurant_name="Durable Menu",
+                source=complete_source,
+                db_path=self.db_path,
+            )
+        )
+
+        empty_source = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url="https://example.com/failed-refresh",
+            reliability=0.2,
+            sections=[],
+        )
+        self.assertFalse(
+            save_menu_source(
+                restaurant_id="durable-menu",
+                restaurant_name="Durable Menu",
+                source=empty_source,
+                status="failed",
+                error_message="No dishes found",
+                db_path=self.db_path,
+            )
+        )
+
+        stored = load_menu_source("durable-menu", self.db_path)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.sections[0].items[0].name, "Rice Bowl")
+
     def test_extracts_simple_html_menu_without_navigation_or_prompt_injection(self) -> None:
         source = parse_menu_html(SIMPLE_HTML_MENU, "https://example.com/menu")
         item_names = [item.name for section in source.sections for item in section.items]

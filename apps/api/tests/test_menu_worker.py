@@ -5,8 +5,9 @@ from unittest.mock import patch
 
 from allernav_api.document_intelligence import DocumentExtraction
 from allernav_api.menu_job_queue import MenuRefreshMessage
+from allernav_api.menu_indexing import finish_menu_index
 from allernav_api.menu_worker import process_menu_refresh_message
-from allernav_api.models import MenuItem, MenuSection, SearchIndexResponse
+from allernav_api.models import MenuItem, MenuRefreshJob, MenuSection, SearchIndexResponse
 
 
 MESSAGE = MenuRefreshMessage(
@@ -61,7 +62,7 @@ class MenuWorkerTests(unittest.TestCase):
             "allernav_api.menu_worker.save_menu_source",
             side_effect=lambda **kwargs: saved_sources.append(kwargs["source"]) or True,
         ), patch(
-            "allernav_api.menu_worker.index_restaurant_menu",
+            "allernav_api.menu_indexing.index_restaurant_menu",
             return_value=SearchIndexResponse(
                 restaurant_id="forever-thai", indexed_documents=2, status="indexed"
             ),
@@ -74,6 +75,11 @@ class MenuWorkerTests(unittest.TestCase):
         self.assertEqual(saved_sources[0].menu_version, "May 2026")
         self.assertEqual(saved_sources[0].document_urls, MESSAGE.document_urls)
         self.assertEqual(saved_jobs[-1].status, "complete")
+        self.assertEqual(saved_jobs[-1].indexing_status, "complete")
+        pending_jobs = [job for job in saved_jobs if job.indexing_status == "pending"]
+        self.assertEqual(len(pending_jobs), 1)
+        self.assertEqual(pending_jobs[0].status, "complete")
+        self.assertEqual(pending_jobs[0].trace[-1].status, "pending")
 
     def test_partial_ocr_failure_is_retried_and_not_published(self) -> None:
         saved_jobs = []
@@ -91,6 +97,30 @@ class MenuWorkerTests(unittest.TestCase):
 
         self.assertEqual(saved_jobs[-1].status, "failed")
         self.assertIn("after 3 attempts", saved_jobs[-1].message)
+
+    def test_index_failure_keeps_published_menu_complete(self) -> None:
+        job = MenuRefreshJob(
+            id=MESSAGE.job_id,
+            place_id=MESSAGE.place_id,
+            status="complete",
+            message="Menu extracted.",
+            item_count=2,
+            indexing_status="pending",
+            created_at="2026-06-29T00:00:00+00:00",
+            completed_at="2026-06-29T00:00:01+00:00",
+        )
+
+        saved_jobs = []
+        result = finish_menu_index(
+            job,
+            persist=saved_jobs.append,
+            indexer=lambda _place_id: (_ for _ in ()).throw(RuntimeError("Azure unavailable")),
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.indexing_status, "failed")
+        self.assertIn("menu remains available", result.message)
+        self.assertEqual(result.trace[-1].status, "failed")
 
 
 if __name__ == "__main__":

@@ -34,15 +34,21 @@ class AzureOpenAIEmbeddingClient:
         return bool(self.endpoint and self.api_key and self.deployment)
 
     def embed_text(self, text: str) -> list[float]:
-        if not self.configured:
+        embeddings = self.embed_texts([text])
+        return embeddings[0] if embeddings else []
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
             return []
+        if not self.configured:
+            return [[] for _text in texts]
 
         url = (
             f"{self.endpoint}/openai/deployments/{self.deployment}/embeddings"
             f"?api-version={embedding_api_version()}"
         )
 
-        payload = {"input": text}
+        payload = {"input": texts}
 
         req = request.Request(
             url,
@@ -62,15 +68,16 @@ class AzureOpenAIEmbeddingClient:
             raise RuntimeError("Azure OpenAI embeddings request failed.") from exc
 
         data = body.get("data") if isinstance(body, dict) else None
-        if not isinstance(data, list) or not data:
-            return []
+        if not isinstance(data, list):
+            return [[] for _text in texts]
 
-        first = data[0]
-        if not isinstance(first, dict):
-            return []
-
-        embedding = first.get("embedding")
-        if not isinstance(embedding, list):
-            return []
-
-        return [float(value) for value in embedding]
+        embeddings: list[list[float]] = [[] for _text in texts]
+        for position, item in enumerate(data):
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index", position)
+            embedding = item.get("embedding")
+            if not isinstance(index, int) or not 0 <= index < len(embeddings) or not isinstance(embedding, list):
+                continue
+            embeddings[index] = [float(value) for value in embedding]
+        return embeddings

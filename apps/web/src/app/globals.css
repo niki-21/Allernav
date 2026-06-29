@@ -1623,6 +1623,24 @@ body {
   color: #174ea6;
 }
 
+.place-status-row .rag-ready {
+  border-color: #a8d5bd;
+  background: #eaf7ef;
+  color: #176b43;
+}
+
+.place-status-row .rag-updating {
+  border-color: #f0c36a;
+  background: #fff6df;
+  color: #865300;
+}
+
+.place-status-row .rag-unavailable {
+  border-color: #e8aaa5;
+  background: #fce8e6;
+  color: #a5221f;
+}
+
 .menu-status-chip.avoid {
   border-color: #e8aaa5;
   background: #fce8e6;

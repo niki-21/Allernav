@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from .menu_ingestion import (
     load_menu_source,
     load_place_menu,
 )
+from .menu_indexing import finish_menu_index
 from .menu_job_queue import MenuRefreshMessage, enqueue_menu_refresh, service_bus_menu_queue_configured
 from .squarespace_menu import MenuImageSet, discover_squarespace_menu_images
 from . import supabase_store
@@ -49,6 +51,7 @@ MENU_REFRESH_JOBS: dict[str, MenuRefreshJob] = {}
 REVIEW_REFRESH_JOBS: dict[str, ReviewRefreshJob] = {}
 ASK_REQUESTS: dict[str, AskRestaurantResponse] = {}
 PROFILE = UserProfileResponse()
+MENU_INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="allernav-menu-index")
 
 
 async def search_places_service(
@@ -312,29 +315,25 @@ async def create_menu_refresh_job(
             )
         )
     )
-    index_result = None
     if item_count:
-        index_started_at = datetime.now(UTC)
-        try:
-            index_result = index_restaurant_menu(place_id)
-            index_status = "complete" if index_result.status == "indexed" else "skipped"
-            index_detail = (
-                f"Indexed {index_result.indexed_documents} dish document{'s' if index_result.indexed_documents != 1 else ''} in Azure AI Search."
-                if index_result.status == "indexed"
-                else f"Azure AI Search indexing returned {index_result.status.replace('_', ' ')}."
+        trace.append(
+            IngestionTraceStep(
+                id="menu_extracted",
+                label="Menu extracted",
+                status="complete",
+                detail=f"Published {item_count} dish-level menu items for immediate review.",
+                provider=source.extraction_method or "menu_ingestion",
+                item_count=item_count,
             )
-        except Exception as exc:  # noqa: BLE001 - indexing failure should remain visible without discarding OCR output
-            index_status = "failed"
-            index_detail = str(exc) or "Azure AI Search indexing failed."
+        )
         trace.append(
             IngestionTraceStep(
                 id="search_index",
                 label="Index menu evidence",
-                status=index_status,
-                detail=index_detail,
+                status="pending",
+                detail="Menu evidence is available while the RAG index updates in the background.",
                 provider="azure_ai_search",
-                item_count=index_result.indexed_documents if index_result else 0,
-                duration_ms=round((datetime.now(UTC) - index_started_at).total_seconds() * 1000),
+                item_count=item_count,
             )
         )
     else:
@@ -360,11 +359,14 @@ async def create_menu_refresh_job(
         extraction_method=source.extraction_method,
         page_count=source.page_count,
         extraction_confidence=source.extraction_confidence,
+        indexing_status="pending" if item_count else "skipped",
         trace=trace,
         created_at=now,
         completed_at=datetime.now(UTC).isoformat(),
     )
     MENU_REFRESH_JOBS[job.id] = job
+    if item_count:
+        MENU_INDEX_EXECUTOR.submit(_finish_local_menu_index, job.id)
     return job
 
 
@@ -374,6 +376,19 @@ async def get_menu_refresh_job_service(job_id: str) -> MenuRefreshJob | None:
         MENU_REFRESH_JOBS[job_id] = durable
         return durable
     return MENU_REFRESH_JOBS.get(job_id)
+
+
+def _finish_local_menu_index(job_id: str) -> None:
+    current = MENU_REFRESH_JOBS.get(job_id)
+    if not current:
+        return
+
+    def persist(job: MenuRefreshJob) -> None:
+        MENU_REFRESH_JOBS[job_id] = job
+        if supabase_store.configured():
+            supabase_store.save_menu_refresh_job(job)
+
+    finish_menu_index(current, persist=persist, indexer=index_restaurant_menu)
 
 
 def _discover_squarespace_image_set(website_url: str) -> MenuImageSet | None:
