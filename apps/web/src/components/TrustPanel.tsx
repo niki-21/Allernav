@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 
-import type { AskRestaurantResponse, MenuRefreshJob, PlaceDetailsResponse, PlaceDetailState, PlaceSummary } from "@/lib/types";
+import type {
+  AllergyTag,
+  AskRestaurantResponse,
+  MenuItem,
+  MenuRefreshJob,
+  PlaceDetailsResponse,
+  PlaceDetailState,
+  PlaceSummary,
+} from "@/lib/types";
 
 interface TrustPanelProps {
   place: PlaceSummary | null;
@@ -17,6 +25,14 @@ interface TrustPanelProps {
 }
 
 type PlaceTab = "overview" | "menu" | "reviews" | "about";
+type VerificationTone = "needs-check" | "possible" | "avoid" | "unknown";
+
+interface MenuVerification {
+  label: "Needs check" | "Possible" | "Avoid" | "Unknown";
+  tone: VerificationTone;
+  metadata: string;
+  detail: string;
+}
 
 function formatRiskLabel(value: string): string {
   return value.replace(/_/g, " ");
@@ -68,6 +84,54 @@ function formatExtractionMethod(value?: string | null): string | null {
     return "Azure Document Intelligence OCR";
   }
   return value.replace(/_/g, " ");
+}
+
+function formatAllergen(value: AllergyTag): string {
+  return value.replace(/_/g, " ");
+}
+
+function getMenuVerification(
+  item: MenuItem,
+  selectedAllergens: AllergyTag[],
+  fallbackConfidence?: number | null,
+): MenuVerification {
+  const detectedAllergens = item.likely_risky_for.filter((allergen) => selectedAllergens.includes(allergen));
+  const confidence = item.ocr_confidence ?? fallbackConfidence;
+
+  if (detectedAllergens.length > 0) {
+    const allergenList = detectedAllergens.map(formatAllergen).join(", ");
+    return {
+      label: "Avoid",
+      tone: "avoid",
+      metadata: `✕ likely avoid · ⚠ ${allergenList} detected`,
+      detail: `Selected allergen evidence was detected: ${allergenList}. Verify the source and do not rely on this item as a lower-risk option.`,
+    };
+  }
+
+  if (!item.description?.trim()) {
+    return {
+      label: "Unknown",
+      tone: "unknown",
+      metadata: "ⓘ ingredients unavailable · verify prep",
+      detail: "The menu source provides a dish name but no usable ingredient description or cross-contact information.",
+    };
+  }
+
+  if (typeof confidence === "number" && confidence < 0.65) {
+    return {
+      label: "Needs check",
+      tone: "needs-check",
+      metadata: "⚠ source needs review · ⓘ verify ingredients",
+      detail: `The extracted source confidence is ${Math.round(confidence * 100)}%. Confirm ingredients and preparation with staff.`,
+    };
+  }
+
+  return {
+    label: "Possible",
+    tone: "possible",
+    metadata: "✓? no selected allergen detected · verify prep",
+    detail: "No selected allergen was detected in the available menu text. Ingredients and cross-contact still require verification.",
+  };
 }
 
 export default function TrustPanel({
@@ -172,9 +236,17 @@ export default function TrustPanel({
         <h2>{data.name}</h2>
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
-        <p className="compact-score-row">
-          Evidence score {data.score_summary.fit_score}/100 · {confidencePercent}% source confidence · verify before ordering
-        </p>
+        <div
+          className="place-status-row"
+          title={`Source confidence ${confidencePercent}%. Evidence fit ${data.score_summary.fit_score}/100.`}
+          aria-label="Menu and retrieval status"
+        >
+          <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
+            {menuItemCount > 0 ? "Menu found" : "Menu pending"}
+          </span>
+          <span className="needs-verification">Needs verification</span>
+          <span className="rag-mode">RAG: hybrid</span>
+        </div>
       </div>
 
       <div className="detail-action-row compact-actions">
@@ -267,7 +339,7 @@ export default function TrustPanel({
           </div>
           {data.recommended_items.length > 0 && (
             <div className="verify-list">
-              <strong>Items to verify</strong>
+              <strong>Possible lower-risk items to ask about.</strong>
               {data.recommended_items.slice(0, 5).map((item) => (
                 <article
                   key={`${item.section_title ?? "pick"}-${item.name}`}
@@ -275,11 +347,14 @@ export default function TrustPanel({
                   title={`${item.reason}${item.caution ? ` ${item.caution}` : ""}`}
                 >
                   <div>
-                    <strong>{item.name}</strong>
-                    <p>{item.reason}</p>
-                    {item.caution && <p className="muted-line">{item.caution}</p>}
+                    <div className="menu-item-heading">
+                      <strong>{item.name}</strong>
+                      <span className="menu-status-chip possible" title="Possible lower-risk based on available evidence; verify with staff.">
+                        Possible
+                      </span>
+                    </div>
+                    <p className="menu-item-meta possible">✓? possible lower-risk · verify ingredients and prep</p>
                   </div>
-                  <span>Verify</span>
                 </article>
               ))}
             </div>
@@ -298,28 +373,36 @@ export default function TrustPanel({
               {menuSections.slice(0, 3).map((section) => (
                 <section key={section.title} className="menu-list-section">
                   <h3>{section.title}</h3>
-                  {section.items.slice(0, 6).map((item) => (
-                    <article
-                      key={`${section.title}-${item.name}`}
-                      className="menu-list-item compact-menu-row"
-                      title={item.description ?? "Menu item extracted from source. Verify ingredients with staff."}
-                    >
-                      <div>
-                        <strong>{item.name}</strong>
-                        {item.description && <p>{item.description}</p>}
-                        {item.likely_risky_for.some((allergen) => data.selected_allergens.includes(allergen)) && (
-                          <p className="menu-risk-note">
-                            Watch:{" "}
-                            {item.likely_risky_for
-                              .filter((allergen) => data.selected_allergens.includes(allergen))
-                              .map((allergen) => allergen.replace("_", " "))
-                              .join(", ")}
-                          </p>
-                        )}
-                      </div>
-                      <span>{item.price ?? "Verify"}</span>
-                    </article>
-                  ))}
+                  {section.items.slice(0, 6).map((item) => {
+                    const verification = getMenuVerification(
+                      item,
+                      data.selected_allergens,
+                      data.menu?.extraction_confidence,
+                    );
+                    const tooltip = [item.description, verification.detail].filter(Boolean).join(" ");
+
+                    return (
+                      <article
+                        key={`${section.title}-${item.name}`}
+                        className="menu-list-item compact-menu-row"
+                        title={tooltip}
+                      >
+                        <div>
+                          <div className="menu-item-heading">
+                            <strong>{item.name}</strong>
+                            <span
+                              className={`menu-status-chip ${verification.tone}`}
+                              title={verification.detail}
+                            >
+                              {verification.label}
+                            </span>
+                          </div>
+                          <p className={`menu-item-meta ${verification.tone}`}>{verification.metadata}</p>
+                        </div>
+                        {item.price && <span className="menu-price">{item.price}</span>}
+                      </article>
+                    );
+                  })}
                 </section>
               ))}
             </div>
@@ -328,7 +411,7 @@ export default function TrustPanel({
               <strong>Dish evidence found by agent analysis</strong>
               <p>
                 The structured menu panel is not populated yet, but AllerNav found dish-level evidence through the
-                agentic safety check. Treat these as verification targets, not confirmed lower-risk dishes.
+                agentic evidence check. Treat these as verification targets, not confirmed lower-risk dishes.
               </p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
@@ -341,7 +424,7 @@ export default function TrustPanel({
               <strong>No reliable dish-level menu found</strong>
               <p>
                 AllerNav checked available menu sources but did not find structured dish names with usable ingredient
-                context. This is insufficient evidence, not a safety signal.
+                context. This is insufficient evidence, not a verification signal.
               </p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
@@ -361,7 +444,7 @@ export default function TrustPanel({
               }
             >
               <summary>
-                <strong>Menu agent trace</strong>
+                <strong>Menu RAG trace</strong>
                 <span className={`trace-status ${isMenuLoading ? "running" : menuRefreshJob?.status ?? "idle"}`}>
                   {isMenuLoading ? "Running" : menuRefreshJob?.status ?? "Idle"}
                 </span>
@@ -519,7 +602,7 @@ export default function TrustPanel({
             </div>
           )}
           <div className="about-row">
-            <strong>Safety note</strong>
+            <strong>Verification note</strong>
             <p>Use inferred information cautiously and verify ingredients, prep surfaces, and cross-contact before ordering.</p>
           </div>
           {agentRecommendation && (

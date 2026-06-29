@@ -12,6 +12,28 @@ import type {
 
 const API_PREFIX = (process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "") + "/api";
 
+const MENU_SCAN_TIMEOUT_MESSAGE = "The scan took too long. Try again or open the restaurant panel.";
+
+export function menuScanErrorMessage(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const normalized = rawMessage.toLowerCase();
+
+  if (
+    normalized.includes("abort") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("signal")
+  ) {
+    return MENU_SCAN_TIMEOUT_MESSAGE;
+  }
+
+  if (rawMessage.trim().startsWith("{") || rawMessage.trim().startsWith("[")) {
+    return MENU_SCAN_TIMEOUT_MESSAGE;
+  }
+
+  return rawMessage || "The menu scan could not finish. Try again or open the restaurant panel.";
+}
+
 export function buildSearchPayload(query: string, center: LatLng, allergens: AllergyTag[]) {
   return {
     query,

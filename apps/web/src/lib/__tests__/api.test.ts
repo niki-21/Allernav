@@ -6,6 +6,7 @@ import {
   buildNearbySuggestionPayload,
   buildPlaceDetailsUrl,
   buildSearchPayload,
+  menuScanErrorMessage,
   shouldUseVisibleCandidates,
 } from "../api.ts";
 
@@ -80,4 +81,22 @@ test("buildNearbySuggestionPayload starts fresh search for cuisine prompts", () 
   );
   assert.equal(shouldUseVisibleCandidates("Which visible place looks better?"), true);
   assert.equal(shouldUseVisibleCandidates("Find sushi nearby"), false);
+});
+
+test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {
+  assert.equal(
+    menuScanErrorMessage(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
+    "The scan took too long. Try again or open the restaurant panel.",
+  );
+  assert.equal(
+    menuScanErrorMessage('{"detail":"The signal timed out"}'),
+    "The scan took too long. Try again or open the restaurant panel.",
+  );
+});
+
+test("menuScanErrorMessage hides malformed JSON responses", () => {
+  assert.equal(
+    menuScanErrorMessage("{invalid-json"),
+    "The scan took too long. Try again or open the restaurant panel.",
+  );
 });

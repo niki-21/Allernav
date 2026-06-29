@@ -17,6 +17,7 @@ import {
   askRestaurant,
   fetchMenuRefreshJob,
   fetchPlaceDetails,
+  menuScanErrorMessage,
   refreshPlaceMenu,
   searchPlaces,
 } from "@/lib/api";
@@ -120,7 +121,7 @@ export default function Home() {
         });
       } catch (error) {
         const completedAt = new Date().toISOString();
-        const message = error instanceof Error ? error.message : "Menu discovery failed.";
+        const message = menuScanErrorMessage(error);
         setMenuRefreshJobs((current) => ({
           ...current,
           [details.id]: {
@@ -134,9 +135,7 @@ export default function Home() {
                 id: "request",
                 label: "Run menu discovery",
                 status: "failed",
-                detail: message.includes("signal timed out")
-                  ? "The browser stopped waiting after 55 seconds. The API pipeline needs a shorter job or background processing."
-                  : message,
+                detail: message,
               },
             ],
             created_at: startedAt,
