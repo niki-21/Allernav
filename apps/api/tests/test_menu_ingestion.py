@@ -13,12 +13,14 @@ from allernav_api.menu_ingestion import (
     discover_candidate_urls,
     extract_candidate_menu_urls,
     ingest_menu_from_website,
+    ingest_first_matching_source,
     load_menu_source,
     load_place_menu,
     parse_menu_html,
     parse_menu_document,
     save_menu_source,
     stored_evidence,
+    validate_source_identity,
 )
 from allernav_api.models import AllergyProfile, AllergyTag, MenuItem, MenuSection, MenuSource, RestaurantContext, RiskLevel, SourceType
 
@@ -454,11 +456,59 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.page_count, 2)
         self.assertEqual(source.sections[0].items[0].name, "Tuna Roll")
 
+    def test_source_identity_accepts_official_domain_and_rejects_unrelated_menu_page(self) -> None:
+        accepted, _detail = validate_source_identity(
+            candidate_url="https://menus.restaurant.example/dinner",
+            official_website_url="https://restaurant.example",
+            restaurant_name="Angel",
+        )
+        self.assertTrue(accepted)
+
+        trace = []
+        source = ingest_first_matching_source(
+            candidate_urls=["https://menu-prices.example/kabab-king-bd.pdf"],
+            fetcher=lambda _url: "<title>Kabab King (BD) Menu Prices PDF</title>",
+            document_extractor=lambda _url: None,
+            restaurant_id="angel",
+            restaurant_name="Angel",
+            official_website_url="https://angel.example",
+            trace=trace,
+            db_path=self.db_path,
+        )
+
+        self.assertIsNone(source)
+        self.assertEqual(trace[-1].id, "source_identity_check")
+        self.assertEqual(trace[-1].status, "rejected")
+        self.assertIsNone(load_menu_source("angel", self.db_path))
+
+    def test_trace_marks_ocr_skipped_when_no_document_candidate_exists(self) -> None:
+        trace = []
+        source = ingest_menu_from_website(
+            restaurant_id="html-menu",
+            restaurant_name="HTML Menu",
+            website_url="https://restaurant.example/menu",
+            fetch_html=lambda _url: SIMPLE_HTML_MENU,
+            db_path=self.db_path,
+            trace=trace,
+        )
+
+        self.assertTrue(source.sections)
+        ocr_step = next(step for step in trace if step.id == "document_ocr")
+        self.assertEqual(ocr_step.status, "skipped_no_document")
+
     def test_web_search_candidates_are_used_after_site_discovery_fails(self) -> None:
         with patch(
             "allernav_api.menu_ingestion.discover_web_menu_candidates",
             return_value=[
-                type("Candidate", (), {"url": "https://cdn.example.com/menu-photo.jpg"})(),
+                type(
+                    "Candidate",
+                    (),
+                    {
+                        "url": "https://cdn.example.com/menu-photo.jpg",
+                        "title": "Web Search Place Menu",
+                        "snippet": "Official menu photo for Web Search Place",
+                    },
+                )(),
             ],
         ):
             source = ingest_menu_from_website(

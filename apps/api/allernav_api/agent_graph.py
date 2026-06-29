@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - keeps local installs usable before opt
         return decorator
 
 from .fixtures import get_fixture_context
+from .langchain_tracing import update_current_trace_metadata
 from .menu_ingestion import ingest_menu_from_website, load_menu_source
 from .models import (
     AgentTraceSummary,
@@ -215,4 +216,14 @@ def safety_confidence_gate(state: DiningAgentState) -> DiningAgentState:
     result.trace = trace
     result.trace.routed_to_safety_gate = result.trace.routed_to_safety_gate or result.recommended_action.value != "verify"
     result.trace.abstained = result.recommended_action.value == "insufficient_evidence"
+    context = state.get("context")
+    item_count = sum(len(section.items) for source in context.menu_sources for section in source.sections) if context else 0
+    update_current_trace_metadata(
+        restaurant_id=state.get("restaurant_id") or (context.restaurant_id if context else None),
+        source_url=context.menu_sources[0].source_url if context and context.menu_sources else None,
+        item_count=item_count,
+        allergens=[allergen.value for allergen in (state.get("profile") or AllergyProfile()).allergens],
+        safety_gate=result.recommended_action.value,
+        retrieval_mode="stored_or_official_menu",
+    )
     return {"result": result, "trace": trace}

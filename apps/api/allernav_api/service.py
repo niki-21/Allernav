@@ -54,6 +54,18 @@ PROFILE = UserProfileResponse()
 MENU_INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="allernav-menu-index")
 
 
+def menu_refresh_mode() -> str:
+    value = os.getenv("MENU_REFRESH_MODE", "auto").strip().lower()
+    return value if value in {"local", "durable", "auto"} else "auto"
+
+
+def production_environment() -> bool:
+    return (
+        os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+        or os.getenv("VERCEL_ENV", "").strip().lower() == "production"
+    )
+
+
 async def search_places_service(
     payload: SearchRequest,
     client: GooglePlacesClient,
@@ -223,7 +235,9 @@ async def create_menu_refresh_job(
         MENU_REFRESH_JOBS[job.id] = job
         return job
 
-    if service_bus_menu_queue_configured() and supabase_store.configured():
+    refresh_mode = menu_refresh_mode()
+    durable_configured = service_bus_menu_queue_configured() and supabase_store.configured()
+    if refresh_mode != "local" and durable_configured:
         image_set = _discover_squarespace_image_set(resolved_url)
         document_urls = image_set.document_urls if image_set else []
         job = MenuRefreshJob(
@@ -252,12 +266,35 @@ async def create_menu_refresh_job(
                     provider="squarespace_image_discovery" if image_set else "restaurant_website",
                     source_url=resolved_url,
                     item_count=len(document_urls),
-                )
+                ),
+                *(
+                    [
+                        IngestionTraceStep(
+                            id="source_identity_check",
+                            label="Verify menu source identity",
+                            status="accepted",
+                            detail="Accepted menu images because they were linked from the official restaurant website.",
+                            provider="source_identity_validator",
+                            source_url=image_set.source_url,
+                            item_count=len(document_urls),
+                        )
+                    ]
+                    if image_set
+                    else []
+                ),
             ],
             created_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
         if not supabase_store.save_menu_refresh_job(job):
+            if refresh_mode == "auto" or not production_environment():
+                return _create_local_menu_refresh_job(
+                    place_id=place_id,
+                    restaurant_name=resolved_name,
+                    website_url=resolved_url,
+                    restaurant_address=place.get("address"),
+                    fallback_detail="Supabase job persistence failed; continued with local ingestion.",
+                )
             failed = job.model_copy(
                 update={
                     "status": "failed",
@@ -280,6 +317,23 @@ async def create_menu_refresh_job(
                 )
             )
         except RuntimeError as exc:
+            if refresh_mode == "auto" or not production_environment():
+                failed = job.model_copy(
+                    update={
+                        "status": "failed",
+                        "message": f"Durable queue enqueue failed; local fallback started. {exc}",
+                        "completed_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                MENU_REFRESH_JOBS[job.id] = failed
+                supabase_store.save_menu_refresh_job(failed)
+                return _create_local_menu_refresh_job(
+                    place_id=place_id,
+                    restaurant_name=resolved_name,
+                    website_url=resolved_url,
+                    restaurant_address=place.get("address"),
+                    fallback_detail=f"Durable queue enqueue failed; continued locally. {exc}",
+                )
             failed = job.model_copy(
                 update={
                     "status": "failed",
@@ -292,12 +346,56 @@ async def create_menu_refresh_job(
             return failed
         return job
 
-    trace: list[IngestionTraceStep] = []
-    source = ingest_menu_from_website(
-        restaurant_id=place_id,
+    if refresh_mode == "durable" and production_environment():
+        job = MenuRefreshJob(
+            id=str(uuid4()),
+            place_id=place_id,
+            status="failed",
+            message="Durable menu refresh requires configured Supabase and Azure Service Bus.",
+            created_at=now,
+            completed_at=now,
+        )
+        MENU_REFRESH_JOBS[job.id] = job
+        return job
+
+    return _create_local_menu_refresh_job(
+        place_id=place_id,
         restaurant_name=resolved_name,
         website_url=resolved_url,
         restaurant_address=place.get("address"),
+        fallback_detail=(
+            "Durable services were unavailable; continued with local ingestion."
+            if refresh_mode == "durable" and not durable_configured
+            else None
+        ),
+    )
+
+
+def _create_local_menu_refresh_job(
+    *,
+    place_id: str,
+    restaurant_name: str | None,
+    website_url: str,
+    restaurant_address: str | None,
+    fallback_detail: str | None = None,
+) -> MenuRefreshJob:
+    now = datetime.now(UTC).isoformat()
+    trace: list[IngestionTraceStep] = []
+    if fallback_detail:
+        trace.append(
+            IngestionTraceStep(
+                id="refresh_mode",
+                label="Select refresh mode",
+                status="fallback_local",
+                detail=fallback_detail,
+                provider="local_ingestion",
+            )
+        )
+    source = ingest_menu_from_website(
+        restaurant_id=place_id,
+        restaurant_name=restaurant_name,
+        website_url=website_url,
+        restaurant_address=restaurant_address,
         trace=trace,
     )
     item_count = sum(len(section.items) for section in source.sections)
@@ -311,7 +409,7 @@ async def create_menu_refresh_job(
             if needs_background_refresh
             else (
                 "No reliable dish-level menu items were extracted. "
-                f"Last checked source: {source.source_url or resolved_url}."
+                f"Last checked source: {source.source_url or website_url}."
             )
         )
     )

@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from .langchain_tracing import invoke_traced_runnable, update_current_trace_metadata
 from .models import MenuItem, MenuSection
 
 
@@ -43,6 +44,7 @@ def extract_english_menu_page(
     source_url: str,
     source_page: int,
     ocr_confidence: float | None,
+    restaurant_id: str | None = None,
     invoker: StructuredInvoker | None = None,
 ) -> list[MenuSection]:
     if not ocr_text.strip():
@@ -60,20 +62,36 @@ def extract_english_menu_page(
         ),
         ("human", f"OCR page {source_page}:\n\n{ocr_text[:24000]}"),
     ]
-    for _attempt in range(2):
-        try:
-            result = invoke(messages)
-            page = result if isinstance(result, ExtractedMenuPage) else ExtractedMenuPage.model_validate(result)
-            return _grounded_sections(
-                page,
-                ocr_text=ocr_text,
-                source_url=source_url,
-                source_page=source_page,
-                ocr_confidence=ocr_confidence,
-            )
-        except (ValidationError, TypeError, ValueError):
-            continue
-    return []
+    def normalize(input_messages: list[tuple[str, str]]) -> list[MenuSection]:
+        for _attempt in range(2):
+            try:
+                result = invoke(input_messages)
+                page = result if isinstance(result, ExtractedMenuPage) else ExtractedMenuPage.model_validate(result)
+                sections = _grounded_sections(
+                    page,
+                    ocr_text=ocr_text,
+                    source_url=source_url,
+                    source_page=source_page,
+                    ocr_confidence=ocr_confidence,
+                )
+                update_current_trace_metadata(item_count=sum(len(section.items) for section in sections))
+                return sections
+            except (ValidationError, TypeError, ValueError):
+                continue
+        update_current_trace_metadata(item_count=0)
+        return []
+
+    return invoke_traced_runnable(
+        name="AllerNav Menu Normalization",
+        value=messages,
+        func=normalize,
+        metadata={
+            "restaurant_id": restaurant_id,
+            "source_url": source_url,
+            "ocr_page": source_page,
+            "ocr_confidence": ocr_confidence,
+        },
+    )
 
 
 def _langchain_invoker() -> StructuredInvoker | None:

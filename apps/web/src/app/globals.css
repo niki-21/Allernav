@@ -1641,6 +1641,19 @@ body {
   color: #a5221f;
 }
 
+.place-status-row .refresh-failed {
+  border-color: #e8aaa5;
+  background: #fce8e6;
+  color: #a5221f;
+}
+
+.menu-refresh-warning {
+  margin-top: 4px;
+  color: #a5221f !important;
+  font-size: 0.8rem !important;
+  font-weight: 650;
+}
+
 .menu-status-chip.avoid {
   border-color: #e8aaa5;
   background: #fce8e6;

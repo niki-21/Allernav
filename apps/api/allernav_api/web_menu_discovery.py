@@ -234,11 +234,22 @@ def parse_google_search_candidates(payload: dict[str, Any]) -> list[WebMenuCandi
         )
         pagemap = item.get("pagemap")
         if isinstance(pagemap, dict):
-            candidates.extend(image_candidates_from_pagemap(pagemap))
+            candidates.extend(
+                image_candidates_from_pagemap(
+                    pagemap,
+                    title=item.get("title") if isinstance(item.get("title"), str) else None,
+                    snippet=item.get("snippet") if isinstance(item.get("snippet"), str) else None,
+                )
+            )
     return candidates
 
 
-def image_candidates_from_pagemap(pagemap: dict[str, Any]) -> list[WebMenuCandidate]:
+def image_candidates_from_pagemap(
+    pagemap: dict[str, Any],
+    *,
+    title: str | None = None,
+    snippet: str | None = None,
+) -> list[WebMenuCandidate]:
     candidates: list[WebMenuCandidate] = []
     for key in ("cse_image", "metatags"):
         values = pagemap.get(key)
@@ -250,7 +261,14 @@ def image_candidates_from_pagemap(pagemap: dict[str, Any]) -> list[WebMenuCandid
             for url_key in ("src", "og:image", "twitter:image"):
                 url = value.get(url_key)
                 if isinstance(url, str):
-                    candidates.append(WebMenuCandidate(url=url, provider="google_programmable_search_image"))
+                    candidates.append(
+                        WebMenuCandidate(
+                            url=url,
+                            title=title,
+                            snippet=snippet,
+                            provider="google_programmable_search_image",
+                        )
+                    )
     return candidates
 
 

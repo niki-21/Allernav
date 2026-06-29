@@ -11,6 +11,7 @@ from allernav_api.models import (
     AllergyTag,
     IngestionTraceStep,
     LatLng,
+    MenuRefreshJob,
     NearbySuggestionRequest,
     PlaceReviewSnippet,
     SearchRequest,
@@ -22,7 +23,7 @@ from allernav_api.rag_service import restaurant_search_query, suggest_nearby_pla
 from fastapi.testclient import TestClient
 from main import allowed_origins
 from app import app
-from allernav_api.service import get_place_details_service, search_places_service
+from allernav_api.service import create_menu_refresh_job, get_place_details_service, menu_refresh_mode, search_places_service
 
 
 class FakePlacesClient:
@@ -62,6 +63,43 @@ class FakePlacesClient:
 
 
 class ApiTests(unittest.TestCase):
+    def test_menu_refresh_mode_defaults_and_local_override(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(menu_refresh_mode(), "auto")
+        with patch.dict("os.environ", {"MENU_REFRESH_MODE": "local"}, clear=True):
+            self.assertEqual(menu_refresh_mode(), "local")
+
+    def test_auto_mode_falls_back_locally_when_durable_persistence_fails(self) -> None:
+        fallback_job = MenuRefreshJob(
+            id="local-fallback",
+            place_id="alpha",
+            status="failed",
+            message="Local scan finished.",
+            created_at="2026-06-29T00:00:00+00:00",
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "MENU_REFRESH_MODE": "auto",
+                "AZURE_SERVICE_BUS_SEND_CONNECTION_STRING": "configured",
+            },
+            clear=True,
+        ), patch("allernav_api.service.supabase_store.configured", return_value=True), patch(
+            "allernav_api.service.supabase_store.save_menu_refresh_job", return_value=False
+        ), patch("allernav_api.service._discover_squarespace_image_set", return_value=None), patch(
+            "allernav_api.service._create_local_menu_refresh_job", return_value=fallback_job
+        ) as local_refresh:
+            result = asyncio.run(
+                create_menu_refresh_job(
+                    "alpha",
+                    restaurant_name="Alpha",
+                    website_url="https://alpha.example",
+                )
+            )
+
+        self.assertEqual(result.id, "local-fallback")
+        local_refresh.assert_called_once()
+
     def test_allowed_origins_include_localhost_defaults(self) -> None:
         origins = allowed_origins()
         self.assertIn("http://localhost:3000", origins)

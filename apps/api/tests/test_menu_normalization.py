@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from allernav_api.azure_search import build_index_documents
 from allernav_api.menu_normalization import extract_english_menu_page
@@ -73,6 +74,33 @@ class MenuNormalizationTests(unittest.TestCase):
 
         self.assertEqual(result, [])
         self.assertEqual(calls, 2)
+
+    def test_normalization_runnable_includes_langsmith_context(self) -> None:
+        captured = {}
+
+        def traced(**kwargs):  # noqa: ANN003, ANN202
+            captured.update(kwargs["metadata"])
+            return kwargs["func"](kwargs["value"])
+
+        with patch("allernav_api.menu_normalization.invoke_traced_runnable", side_effect=traced):
+            extract_english_menu_page(
+                ocr_text="DINNER\nRice Bowl - rice and greens",
+                source_url="https://restaurant.example/menu.jpg",
+                source_page=1,
+                ocr_confidence=0.9,
+                restaurant_id="restaurant-123",
+                invoker=lambda _messages: {
+                    "sections": [
+                        {
+                            "title": "Dinner",
+                            "items": [{"name": "Rice Bowl", "description": "rice and greens"}],
+                        }
+                    ]
+                },
+            )
+
+        self.assertEqual(captured["restaurant_id"], "restaurant-123")
+        self.assertEqual(captured["source_url"], "https://restaurant.example/menu.jpg")
 
 
 if __name__ == "__main__":

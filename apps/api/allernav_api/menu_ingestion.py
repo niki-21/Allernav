@@ -28,7 +28,7 @@ from .document_intelligence import (
 )
 from .models import EvidenceFragment, IngestionTraceStep, MenuItem, MenuSection, MenuSource, PlaceMenu, SourceType
 from .risk_engine import is_prompt_injection, parse_raw_menu_text
-from .web_menu_discovery import discover_web_menu_candidates, web_menu_discovery_configured
+from .web_menu_discovery import WebMenuCandidate, discover_web_menu_candidates, web_menu_discovery_configured
 
 
 FetchHtml = Callable[[str], str | None]
@@ -435,6 +435,8 @@ def ingest_menu_from_website(
         document_extractor=document_extractor,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
+        official_website_url=website_url,
+        trace=trace,
         db_path=db_path,
         deadline=static_deadline,
     )
@@ -462,7 +464,7 @@ def ingest_menu_from_website(
             trace,
             step_id="document_ocr",
             label="Read menu document",
-            status="complete" if used_ocr and static_item_count else ("failed" if ocr_configured else "skipped"),
+            status="complete" if used_ocr and static_item_count else "failed",
             detail=(
                 f"Azure Document Intelligence extracted {static_item_count} usable dish-level item{'s' if static_item_count != 1 else ''}."
                 if used_ocr and static_item_count
@@ -481,7 +483,7 @@ def ingest_menu_from_website(
             trace,
             step_id="document_ocr",
             label="Read menu document",
-            status="skipped",
+            status="skipped_no_document",
             detail="No PDF or image menu candidate was discovered on the restaurant website.",
             provider="azure_document_intelligence",
         )
@@ -513,9 +515,14 @@ def ingest_menu_from_website(
         document_extractor=document_extractor,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
+        official_website_url=website_url,
+        candidate_metadata={candidate.url: candidate for candidate in web_candidates},
+        trace=trace,
         db_path=db_path,
         deadline=deadline,
     )
+    if web_source and web_source.extraction_method == "azure_document_intelligence":
+        _record_document_ocr(trace, web_source)
     web_item_count = menu_source_item_count(web_source)
     append_trace_step(
         trace,
@@ -573,6 +580,8 @@ def ingest_menu_from_website(
         rendered_discovery=rendered_discovery,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
+        official_website_url=website_url,
+        trace=trace,
         db_path=db_path,
     )
     rendered_item_count = menu_source_item_count(rendered_source)
@@ -626,9 +635,13 @@ def ingest_menu_from_website(
         document_extractor=document_extractor,
         restaurant_id=restaurant_id,
         restaurant_name=restaurant_name,
+        official_website_url=website_url,
+        trace=trace,
         db_path=db_path,
         deadline=deadline,
     )
+    if rendered_link_source and rendered_link_source.extraction_method == "azure_document_intelligence":
+        _record_document_ocr(trace, rendered_link_source)
     if rendered_link_source and rendered_link_source.sections:
         return rendered_link_source
     if rendered_link_source:
@@ -700,6 +713,9 @@ def ingest_first_matching_source(
     document_extractor: ExtractDocument,
     restaurant_id: str,
     restaurant_name: str | None,
+    official_website_url: str | None = None,
+    candidate_metadata: dict[str, WebMenuCandidate] | None = None,
+    trace: list[IngestionTraceStep] | None = None,
     db_path: Path | None = None,
     deadline: float | None = None,
 ) -> MenuSource | None:
@@ -708,6 +724,15 @@ def ingest_first_matching_source(
         if deadline is not None and time.monotonic() >= deadline:
             break
         if looks_like_document_url(candidate_url):
+            identity = validate_source_identity(
+                candidate_url=candidate_url,
+                official_website_url=official_website_url,
+                restaurant_name=restaurant_name,
+                metadata=candidate_metadata.get(candidate_url) if candidate_metadata else None,
+            )
+            _record_source_identity(trace, candidate_url, *identity)
+            if not identity[0]:
+                continue
             source = parse_menu_document(candidate_url, document_extractor)
             last_source = source
             if source.sections:
@@ -722,6 +747,16 @@ def ingest_first_matching_source(
 
         page = fetcher(candidate_url)
         if not page:
+            continue
+        identity = validate_source_identity(
+            candidate_url=candidate_url,
+            official_website_url=official_website_url,
+            restaurant_name=restaurant_name,
+            page_text=page,
+            metadata=candidate_metadata.get(candidate_url) if candidate_metadata else None,
+        )
+        _record_source_identity(trace, candidate_url, *identity)
+        if not identity[0]:
             continue
         source = parse_menu_html(page, candidate_url)
         last_source = source
@@ -741,6 +776,8 @@ def ingest_rendered_menu_pages(
     rendered_discovery: RenderedMenuDiscovery,
     restaurant_id: str,
     restaurant_name: str | None,
+    official_website_url: str | None = None,
+    trace: list[IngestionTraceStep] | None = None,
     db_path: Path | None = None,
 ) -> MenuSource:
     last_source = MenuSource(
@@ -752,6 +789,15 @@ def ingest_rendered_menu_pages(
         extraction_method="apify_rendered_text",
     )
     for rendered_page in rendered_discovery.pages:
+        identity = validate_source_identity(
+            candidate_url=rendered_page.url,
+            official_website_url=official_website_url,
+            restaurant_name=restaurant_name,
+            page_text=f"{rendered_page.title or ''}\n{rendered_page.visible_text}",
+        )
+        _record_source_identity(trace, rendered_page.url, *identity)
+        if not identity[0]:
+            continue
         source = parse_rendered_menu_text(rendered_page.visible_text, rendered_page.url)
         last_source = source
         if source.sections:
@@ -763,6 +809,98 @@ def ingest_rendered_menu_pages(
             )
             return source
     return last_source
+
+
+def validate_source_identity(
+    *,
+    candidate_url: str,
+    official_website_url: str | None,
+    restaurant_name: str | None,
+    page_text: str | None = None,
+    metadata: WebMenuCandidate | None = None,
+) -> tuple[bool, str]:
+    candidate_host = _hostname(candidate_url)
+    official_host = _hostname(official_website_url)
+    if candidate_host and official_host and (
+        candidate_host == official_host
+        or candidate_host.endswith(f".{official_host}")
+    ):
+        return True, f"Accepted official-domain source {candidate_host}."
+
+    normalized_name = _identity_text(restaurant_name)
+    if not official_host and not normalized_name:
+        return True, "Accepted source because no restaurant identity context was supplied."
+    evidence = _identity_text(
+        " ".join(
+            value
+            for value in (
+                getattr(metadata, "title", None) if metadata else None,
+                getattr(metadata, "snippet", None) if metadata else None,
+                page_text,
+            )
+            if value
+        )
+    )
+    if normalized_name and re.search(rf"\b{re.escape(normalized_name)}\b", evidence):
+        return True, "Accepted third-party source because its metadata or page content identifies the restaurant."
+    return False, "Rejected source because its domain and content do not identify the selected restaurant."
+
+
+def _hostname(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        return (parse.urlparse(url).hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+def _identity_text(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _record_source_identity(
+    trace: list[IngestionTraceStep] | None,
+    source_url: str,
+    accepted: bool,
+    detail: str,
+) -> None:
+    if trace is None:
+        return
+    trace[:] = [step for step in trace if step.id != "source_identity_check"]
+    trace.append(
+        IngestionTraceStep(
+            id="source_identity_check",
+            label="Verify menu source identity",
+            status="accepted" if accepted else "rejected",
+            detail=detail,
+            provider="source_identity_validator",
+            source_url=source_url,
+        )
+    )
+
+
+def _record_document_ocr(trace: list[IngestionTraceStep] | None, source: MenuSource) -> None:
+    if trace is None:
+        return
+    item_count = menu_source_item_count(source)
+    trace[:] = [step for step in trace if step.id != "document_ocr"]
+    trace.append(
+        IngestionTraceStep(
+            id="document_ocr",
+            label="Read menu document",
+            status="complete" if item_count else "failed",
+            detail=(
+                f"Azure Document Intelligence extracted {item_count} usable dish-level item"
+                f"{'s' if item_count != 1 else ''}."
+                if item_count
+                else "Azure Document Intelligence returned no usable dish-level items."
+            ),
+            provider="azure_document_intelligence",
+            source_url=source.document_url or source.source_url,
+            item_count=item_count,
+        )
+    )
 
 
 def discover_candidate_urls(

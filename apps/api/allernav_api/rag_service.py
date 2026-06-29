@@ -7,6 +7,7 @@ from urllib import error, request
 
 from .azure_search import detect_allergens_in_text, hybrid_search_menu
 from .google_places import GooglePlacesClient
+from .langchain_tracing import ainvoke_traced_runnable, invoke_traced_runnable, update_current_trace_metadata
 from .menu_ingestion import load_menu_source
 from .models import (
     AllergyTag,
@@ -52,6 +53,14 @@ async def suggest_nearby_places_service(
     missing_information = build_missing_information(top_suggestions)
     questions = build_recommended_questions(payload.allergens)
     answer = await generate_nearby_answer(payload, top_suggestions, evidence, missing_information, questions)
+    update_current_trace_metadata(
+        restaurant_id=top_suggestions[0].place.id if len(top_suggestions) == 1 else None,
+        source_url=evidence[0].source_url if evidence else None,
+        item_count=sum(suggestion.menu_item_count for suggestion in top_suggestions),
+        retrieval_mode="hybrid_keyword_semantic",
+        allergens=[allergen.value for allergen in payload.allergens],
+        safety_gate="verify_or_abstain",
+    )
 
     return NearbySuggestionResponse(
         answer=answer,
@@ -151,14 +160,31 @@ def build_place_suggestion(place: PlaceListItem, payload: NearbySuggestionReques
                 if any(allergen in payload.allergens for allergen in matched):
                     matched_allergen_items += 1
 
-    evidence = hybrid_search_menu(
-        HybridSearchRequest(
-            query=payload.question,
-            restaurant_id=place.id,
-            allergens=payload.allergens,
-            top=payload.top_evidence,
-        )
-    ).results
+    search_request = HybridSearchRequest(
+        query=payload.question,
+        restaurant_id=place.id,
+        allergens=payload.allergens,
+        top=payload.top_evidence,
+    )
+    search_response = invoke_traced_runnable(
+        name="AllerNav Azure Search Retriever",
+        value=search_request,
+        func=hybrid_search_menu,
+        metadata={
+            "restaurant_id": place.id,
+            "source_url": source.source_url if source else None,
+            "item_count": menu_item_count,
+            "retrieval_mode": "hybrid",
+            "allergens": [allergen.value for allergen in payload.allergens],
+        },
+    )
+    evidence = search_response.results
+    update_current_trace_metadata(
+        restaurant_id=place.id,
+        item_count=menu_item_count,
+        retrieval_mode=(evidence[0].retrieval_mode if evidence else "hybrid_no_results"),
+        allergens=[allergen.value for allergen in payload.allergens],
+    )
     confidence = suggestion_confidence(menu_item_count, len(evidence), matched_allergen_items)
     return NearbyPlaceSuggestion(
         place=place,
@@ -232,10 +258,29 @@ async def generate_nearby_answer(
     missing_information: list[str],
     questions: list[str],
 ) -> str:
-    llm_answer = generate_gemini_answer(payload, suggestions, evidence, missing_information, questions)
-    if llm_answer:
-        return llm_answer
-    return deterministic_answer(payload, suggestions, missing_information, questions)
+    async def explain(_input: dict[str, str]) -> str:
+        llm_answer = generate_gemini_answer(payload, suggestions, evidence, missing_information, questions)
+        answer = llm_answer or deterministic_answer(payload, suggestions, missing_information, questions)
+        update_current_trace_metadata(
+            retrieval_mode="hybrid_keyword_semantic",
+            safety_gate="verify_or_abstain",
+            item_count=sum(suggestion.menu_item_count for suggestion in suggestions),
+        )
+        return answer
+
+    return await ainvoke_traced_runnable(
+        name="AllerNav RAG Explanation",
+        value={"question": payload.question},
+        func=explain,
+        metadata={
+            "restaurant_id": suggestions[0].place.id if len(suggestions) == 1 else None,
+            "source_url": evidence[0].source_url if evidence else None,
+            "item_count": sum(suggestion.menu_item_count for suggestion in suggestions),
+            "retrieval_mode": "hybrid_keyword_semantic",
+            "allergens": [allergen.value for allergen in payload.allergens],
+            "safety_gate": "verify_or_abstain",
+        },
+    )
 
 
 @traceable(name="Gemini Nearby RAG Explanation", run_type="llm")

@@ -40,6 +40,7 @@ class WebMenuDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(candidates[0].url, "https://restaurant.example/menu")
         self.assertEqual(candidates[1].url, "https://restaurant.example/menu.jpg")
+        self.assertEqual(candidates[1].title, "Dinner Menu")
 
     def test_parses_serpapi_organic_and_image_results(self) -> None:
         candidates = parse_serpapi_candidates(

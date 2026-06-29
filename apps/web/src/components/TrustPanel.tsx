@@ -234,6 +234,20 @@ export default function TrustPanel({
         : indexingStatus === "failed"
           ? { className: "rag-unavailable", label: "RAG index unavailable" }
           : { className: "rag-mode", label: "RAG: hybrid" };
+  const refreshFailed =
+    menuRefreshJob?.status === "failed" || menuRefreshJob?.status === "needs_background_refresh";
+  const scanHasRun = Boolean(menuRefreshJob);
+  const ocrTrace = menuRefreshJob?.trace.find((step) => step.id === "document_ocr");
+  const ocrSummary =
+    data.menu?.extraction_method?.includes("azure_document_intelligence") || ocrTrace?.status === "complete"
+      ? "OCR: used"
+      : ocrTrace?.status === "skipped_no_document"
+        ? "OCR: skipped, no PDF/image menu found"
+        : ocrTrace?.status === "failed"
+          ? "OCR: failed"
+          : ocrTrace?.status === "running"
+            ? "OCR: checking menu documents"
+            : null;
   const ratingLine = [
     data.rating ? `${data.rating.toFixed(1)} on Google` : null,
     data.user_rating_count ? `${data.user_rating_count.toLocaleString()} reviews` : null,
@@ -258,6 +272,7 @@ export default function TrustPanel({
           </span>
           <span className="needs-verification">Needs verification</span>
           <span className={ragStatus.className}>{ragStatus.label}</span>
+          {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
         </div>
       </div>
 
@@ -339,9 +354,15 @@ export default function TrustPanel({
                   ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
                   : hasAgentDishEvidence
                   ? `${agentDishResults.length} agent dish result${agentDishResults.length === 1 ? "" : "s"} found, but the structured menu view is still being normalized.`
-                  : "No reliable dish-level menu found yet."}
+                  : scanHasRun
+                    ? "No reliable dish-level menu found."
+                    : "No menu scanned yet."}
               </p>
               {menuEvidenceLine && <p className="muted-line">{menuEvidenceLine}</p>}
+              {ocrSummary && <p className="muted-line">{ocrSummary}</p>}
+              {refreshFailed && menuItemCount > 0 && (
+                <p className="menu-refresh-warning">Latest saved menu shown; refresh failed.</p>
+              )}
             </div>
             {(data.menu?.source_url || data.menu?.document_url) && (
               <a className="source-link" href={data.menu.source_url ?? data.menu.document_url ?? ""} target="_blank" rel="noreferrer">
@@ -418,6 +439,14 @@ export default function TrustPanel({
                 </section>
               ))}
             </div>
+          ) : !scanHasRun ? (
+            <article className="empty-menu-state">
+              <strong>No menu scanned yet</strong>
+              <p>Start a scan to check the official website and any linked PDF or image menus.</p>
+              <button type="button" className="retry-button" onClick={onRefreshMenu}>
+                Scan menu
+              </button>
+            </article>
           ) : hasAgentDishEvidence ? (
             <article className="empty-menu-state">
               <strong>Dish evidence found by agent analysis</strong>

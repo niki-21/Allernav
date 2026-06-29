@@ -142,6 +142,19 @@ def _process_image_menu(
                 )
                 _save_job(job)
     if failures or len(extractions) != len(message.document_urls):
+        job = _transition(
+            job,
+            status="ocr_processing",
+            message="Azure Document Intelligence could not read every menu page.",
+            trace=IngestionTraceStep(
+                id="document_ocr",
+                label="Read menu images",
+                status="failed",
+                detail=f"OCR failed for {len(failures) or len(message.document_urls) - len(extractions)} menu page(s).",
+                provider="azure_document_intelligence",
+                item_count=len(extractions),
+            ),
+        )
         raise RuntimeError(f"OCR failed for {len(failures) or len(message.document_urls) - len(extractions)} menu page(s).")
 
     job = _transition(
@@ -166,6 +179,7 @@ def _process_image_menu(
                 source_url=url,
                 source_page=page_number,
                 ocr_confidence=extraction.confidence,
+                restaurant_id=message.place_id,
             )
         )
     sections = sanitize_sections(sections, max_sections=24, max_items_per_section=60)
