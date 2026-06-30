@@ -339,7 +339,9 @@ export interface NearbyPlaceSuggestion {
   confidence: number;
   evidence_status: "scanned" | "scan_needed" | "scan_running" | "scan_failed";
   scan_job_id?: string | null;
-  restaurant_fit_score: number;
+  scan_priority_rank?: number | null;
+  scan_priority_score?: number | null;
+  restaurant_fit_score?: number | null;
   restaurant_fit_label:
     | "Better candidate, still verify"
     | "Good candidate to ask about"
@@ -368,6 +370,8 @@ export interface NearbySuggestionResponse {
   missing_information: string[];
   recommended_questions: string[];
   scan_needed_places: PlaceSummary[];
+  top_scan_candidates: PlaceSummary[];
+  scan_job_ids: string[];
 }
 
 export type PlaceDetailState =

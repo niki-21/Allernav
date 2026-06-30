@@ -540,10 +540,12 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(
             response.answer,
-            "Only one candidate was available, and it needs a menu scan before allergy comparison.",
+            "Only one candidate was available. Start by scanning Alpha Cafe before allergy comparison.",
         )
         self.assertEqual(response.missing_information, ["Some nearby places do not have scanned menu evidence yet."])
         self.assertEqual(response.places[0].evidence_status, "scan_needed")
+        self.assertIsNone(response.places[0].restaurant_fit_score)
+        self.assertEqual(response.places[0].scan_priority_rank, 1)
         self.assertEqual(response.scan_needed_places[0].id, "alpha")
         hybrid_search.assert_not_called()
         explanation.assert_not_called()
@@ -613,6 +615,62 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.scan_needed_places[0].id, "charlie")
         self.assertTrue(all(place.reason for place in response.places))
 
+    def test_nearby_rag_prioritizes_eight_unscanned_candidates_without_starting_jobs(self) -> None:
+        center = LatLng(lat=40.74, lng=-73.99)
+        candidates = [
+            PlaceListItem(
+                id=f"place-{index}",
+                name=name,
+                location=LatLng(lat=center.lat + index * 0.002, lng=center.lng),
+                rating=4.9 - index * 0.1,
+                user_rating_count=2000 - index * 150,
+                primary_type="restaurant",
+                website_url=f"https://place-{index}.example",
+            )
+            for index, name in enumerate(
+                [
+                    "L'Adresse NoMad",
+                    "Hole In The Wall",
+                    "Gramercy Tavern",
+                    "Cafe Four",
+                    "Cafe Five",
+                    "Cafe Six",
+                    "Cafe Seven",
+                    "Cafe Eight",
+                ]
+            )
+        ]
+        payload = NearbySuggestionRequest(
+            center=center,
+            candidate_places=candidates,
+            max_places=8,
+            allow_background_scan=False,
+        )
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
+            "allernav_api.service.create_menu_refresh_job", new=AsyncMock()
+        ) as create_job, patch("allernav_api.rag_service.update_current_trace_metadata") as trace_metadata:
+            response = asyncio.run(suggest_nearby_places_service(payload))
+
+        self.assertEqual(
+            response.answer,
+            "I found 8 nearby restaurants in this area. None have scanned menu evidence yet, so I can't compare "
+            "allergy fit. Start by scanning the top 3 candidates: L'Adresse NoMad, Hole In The Wall, and Gramercy Tavern.",
+        )
+        self.assertEqual([place.name for place in response.top_scan_candidates], [
+            "L'Adresse NoMad",
+            "Hole In The Wall",
+            "Gramercy Tavern",
+        ])
+        self.assertTrue(all(item.restaurant_fit_score is None for item in response.places))
+        self.assertEqual([item.scan_priority_rank for item in response.places[:3]], [1, 2, 3])
+        create_job.assert_not_awaited()
+        self.assertEqual(trace_metadata.call_args.kwargs["flow_stage"], "scan_needed")
+        self.assertEqual(trace_metadata.call_args.kwargs["top_scan_candidates"], [
+            "L'Adresse NoMad",
+            "Hole In The Wall",
+            "Gramercy Tavern",
+        ])
+
     def test_nearby_rag_replaces_placeholder_place_name(self) -> None:
         payload = NearbySuggestionRequest(
             allergens=[AllergyTag.FISH],
@@ -659,6 +717,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(create_job.await_count, 2)
         self.assertEqual(sum(item.evidence_status == "scan_running" for item in response.places), 2)
         self.assertEqual(sum(item.evidence_status == "scan_needed" for item in response.places), 1)
+        self.assertEqual(response.scan_job_ids, ["job-0", "job-1"])
+        self.assertIn("I started menu scans for Place 0 and Place 1.", response.answer)
 
 if __name__ == "__main__":
     unittest.main()

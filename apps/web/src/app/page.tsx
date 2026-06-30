@@ -533,6 +533,68 @@ export default function Home() {
         allowBackgroundScan,
       );
       setNearbyAnswer(response);
+      const runningScans = response.places.filter(
+        (suggestion) => suggestion.evidence_status === "scan_running" && suggestion.scan_job_id,
+      );
+      if (allowBackgroundScan && runningScans.length > 0) {
+        void (async () => {
+          const terminalStatuses = new Set(["complete", "failed", "needs_background_refresh"]);
+          for (let attempt = 0; attempt < 90; attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+            const jobs = (
+              await Promise.all(
+                runningScans.map(async (suggestion) => {
+                  try {
+                    return await fetchMenuRefreshJob(suggestion.scan_job_id as string);
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter((job): job is MenuRefreshJob => job !== null);
+            setMenuRefreshJobs((current) => ({
+              ...current,
+              ...Object.fromEntries(jobs.map((job) => [job.place_id, job])),
+            }));
+
+            const completedJobs = jobs.filter((job) => job.status === "complete");
+            if (completedJobs.length > 0) {
+              const refreshedDetails = await Promise.allSettled(
+                completedJobs.map((job) => fetchPlaceDetails(job.place_id, selectedAllergens)),
+              );
+              setDetailStates((current) => {
+                let next = current;
+                refreshedDetails.forEach((result, index) => {
+                  if (result.status === "fulfilled") {
+                    next = applyPlaceDetailSuccess(next, completedJobs[index].place_id, result.value);
+                  }
+                });
+                return next;
+              });
+              const reranked = await askNearbyPlaces(
+                question,
+                mapCenter,
+                selectedAllergens,
+                candidatePlaces,
+                false,
+              );
+              setNearbyAnswer(reranked);
+              break;
+            }
+            if (jobs.length === runningScans.length && jobs.every((job) => terminalStatuses.has(job.status))) {
+              const reranked = await askNearbyPlaces(
+                question,
+                mapCenter,
+                selectedAllergens,
+                candidatePlaces,
+                false,
+              );
+              setNearbyAnswer(reranked);
+              break;
+            }
+          }
+        })();
+      }
       const suggestedPlaces = response.places.map((suggestion) => suggestion.place);
       if (suggestedPlaces.length > 0) {
         const firstSuggestion = suggestedPlaces[0];
@@ -649,6 +711,9 @@ export default function Home() {
             {nearbyAnswer && (
               <div className="nearby-rag-answer">
                 <p>{nearbyAnswer.answer}</p>
+                {nearbyAnswer.places.some((suggestion) => suggestion.evidence_status === "scan_running") && (
+                  <p className="nearby-scan-running">Scanning menus...</p>
+                )}
                 {nearbyAnswer.places.length > 0 && (
                   <div className="nearby-rag-suggestions">
                     {nearbyAnswer.places.slice(0, 3).map((suggestion) => (
@@ -661,10 +726,16 @@ export default function Home() {
                         <strong>{suggestion.place.name}</strong>
                         <span className="nearby-rag-card-meta">
                           <b>{nearbyEvidenceStatus(suggestion.evidence_status)}</b>
-                          <b>{suggestion.restaurant_fit_score}/100</b>
-                          <b>{suggestion.restaurant_fit_label}</b>
+                          {suggestion.restaurant_fit_score != null ? (
+                            <>
+                              <b>{suggestion.restaurant_fit_score}/100</b>
+                              <b>{suggestion.restaurant_fit_label}</b>
+                            </>
+                          ) : (
+                            suggestion.scan_priority_rank && <b>Scan priority #{suggestion.scan_priority_rank}</b>
+                          )}
                         </span>
-                        <small>{nearbyBucketSummary(suggestion)}</small>
+                        {suggestion.restaurant_fit_score != null && <small>{nearbyBucketSummary(suggestion)}</small>}
                         <small className="nearby-rag-next">Next: {suggestion.next_action}</small>
                       </button>
                     ))}

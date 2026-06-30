@@ -370,7 +370,9 @@ class NearbyPlaceSuggestion(BaseModel):
     confidence: float = Field(ge=0, le=1)
     evidence_status: Literal["scanned", "scan_needed", "scan_running", "scan_failed"] = "scan_needed"
     scan_job_id: str | None = None
-    restaurant_fit_score: int = Field(default=20, ge=0, le=100)
+    scan_priority_rank: int | None = Field(default=None, ge=1)
+    scan_priority_score: float | None = Field(default=None, ge=0, le=100)
+    restaurant_fit_score: int | None = Field(default=None, ge=0, le=100)
     restaurant_fit_label: Literal[
         "Better candidate, still verify",
         "Good candidate to ask about",
@@ -400,6 +402,8 @@ class NearbySuggestionResponse(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     recommended_questions: list[str] = Field(default_factory=list)
     scan_needed_places: list[PlaceListItem] = Field(default_factory=list)
+    top_scan_candidates: list[PlaceListItem] = Field(default_factory=list)
+    scan_job_ids: list[str] = Field(default_factory=list)
 
 
 class RecommendedMenuItem(BaseModel):

@@ -117,8 +117,17 @@ test("menu rows hide repeated confidence and RAG cards show one restaurant score
   const trustPanelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
   const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
   assert.equal(trustPanelSource.includes("confidenceText"), false);
-  assert.equal((pageSource.match(/suggestion\.restaurant_fit_score/g) ?? []).length, 1);
+  assert.equal((pageSource.match(/<b>{suggestion\.restaurant_fit_score}\/100<\/b>/g) ?? []).length, 1);
+  assert.equal(pageSource.includes("suggestion.restaurant_fit_score != null"), true);
   assert.equal(pageSource.includes("nearbyBucketSummary(suggestion)"), true);
+});
+
+test("Agentic RAG hides unscanned allergy scores and polls started scans", () => {
+  const source = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes("Scan priority #{suggestion.scan_priority_rank}"), true);
+  assert.equal(source.includes("Scanning menus..."), true);
+  assert.equal(source.includes("fetchMenuRefreshJob(suggestion.scan_job_id as string)"), true);
+  assert.equal(source.includes("setNearbyAnswer(reranked)"), true);
 });
 
 test("Menu tab leads with the fit score and possible lower-risk section", () => {

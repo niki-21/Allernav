@@ -964,6 +964,12 @@ textarea {
   white-space: pre-line;
 }
 
+.nearby-rag-answer .nearby-scan-running {
+  color: #0f6c55;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
 .nearby-rag-suggestions {
   display: grid;
   gap: 7px;

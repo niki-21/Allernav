@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 from typing import Any
@@ -19,6 +20,7 @@ from .models import (
     AllergyTag,
     HybridSearchRequest,
     HybridSearchResult,
+    LatLng,
     MenuSource,
     NearbyPlaceSuggestion,
     NearbySuggestionRequest,
@@ -54,6 +56,7 @@ async def suggest_nearby_places_service(
             )
         )
     )
+    suggestions = assign_scan_priorities(suggestions, payload.center)
     if payload.allow_background_scan:
         suggestions = await start_background_scans(suggestions)
     suggestions.sort(key=suggestion_rank_key, reverse=True)
@@ -63,9 +66,11 @@ async def suggest_nearby_places_service(
     evidence = [item for suggestion in scanned for item in suggestion.evidence]
     missing_information = build_missing_information(suggestions)
     questions = build_recommended_questions(payload.allergens)
-    answer = build_nearby_summary(len(candidates), scanned, scan_needed)
+    top_scan_candidates = scan_needed[:3]
+    answer = build_nearby_summary(len(candidates), scanned, scan_needed, top_scan_candidates)
     retrieval_mode = "hybrid_keyword_semantic" if scanned else "scanned_menu_evidence_needed"
-    trace_nearby_result(payload, suggestions, retrieval_mode)
+    trace_nearby_result(payload, suggestions, retrieval_mode, top_scan_candidates)
+    scan_job_ids = [item.scan_job_id for item in suggestions if item.scan_job_id]
 
     return NearbySuggestionResponse(
         answer=answer,
@@ -75,6 +80,8 @@ async def suggest_nearby_places_service(
         missing_information=missing_information,
         recommended_questions=questions,
         scan_needed_places=[suggestion.place for suggestion in scan_needed],
+        top_scan_candidates=[suggestion.place for suggestion in top_scan_candidates],
+        scan_job_ids=scan_job_ids,
     )
 
 
@@ -110,7 +117,7 @@ def build_place_suggestion(
     update_current_trace_metadata(
         restaurant_id=place.id,
         item_count=fit.menu_item_count,
-        restaurant_fit_score=fit.score,
+        restaurant_fit_score=fit.score if fit.menu_item_count > 0 else None,
         restaurant_fit_label=fit.label,
         avoid_count=fit.avoid_count,
         needs_check_count=fit.needs_check_count,
@@ -122,9 +129,9 @@ def build_place_suggestion(
     )
     return NearbyPlaceSuggestion(
         place=place,
-        confidence=round(fit.score / 100, 2),
+        confidence=round(fit.score / 100, 2) if fit.menu_item_count > 0 else 0,
         evidence_status="scanned" if fit.menu_item_count > 0 else "scan_needed",
-        restaurant_fit_score=fit.score,
+        restaurant_fit_score=fit.score if fit.menu_item_count > 0 else None,
         restaurant_fit_label=fit.label,
         menu_item_count=fit.menu_item_count,
         matched_allergen_items=fit.avoid_count,
@@ -141,8 +148,55 @@ def build_place_suggestion(
     )
 
 
-def suggestion_rank_key(suggestion: NearbyPlaceSuggestion) -> tuple[int, int]:
-    return (1 if suggestion.evidence_status == "scanned" else 0, suggestion.restaurant_fit_score)
+def suggestion_rank_key(suggestion: NearbyPlaceSuggestion) -> tuple[int, float]:
+    if suggestion.evidence_status == "scanned":
+        return (2, suggestion.restaurant_fit_score or 0)
+    return (1, suggestion.scan_priority_score or 0)
+
+
+def assign_scan_priorities(
+    suggestions: list[NearbyPlaceSuggestion],
+    center: LatLng | None,
+) -> list[NearbyPlaceSuggestion]:
+    scored = [
+        (item, scan_priority_score(item.place, center))
+        for item in suggestions
+        if item.evidence_status != "scanned"
+    ]
+    scored.sort(key=lambda entry: entry[1], reverse=True)
+    priorities = {
+        item.place.id: (rank, score)
+        for rank, (item, score) in enumerate(scored, start=1)
+    }
+    return [
+        item.model_copy(
+            update={
+                "scan_priority_rank": priorities[item.place.id][0],
+                "scan_priority_score": priorities[item.place.id][1],
+            }
+        )
+        if item.place.id in priorities
+        else item
+        for item in suggestions
+    ]
+
+
+def scan_priority_score(place: PlaceListItem, center: LatLng | None) -> float:
+    rating_score = ((place.rating or 0) / 5) * 45
+    review_score = min(25, math.log10((place.user_rating_count or 0) + 1) * 8)
+    distance_score = 10.0 if center is None else max(0, 20 - distance_miles(place.location, center) * 5)
+    place_type = (place.primary_type or "").lower()
+    relevance_score = 10 if any(term in place_type for term in ("restaurant", "cafe", "bakery", "food", "bar")) else 0
+    return round(min(100, rating_score + review_score + distance_score + relevance_score), 2)
+
+
+def distance_miles(left: LatLng, right: LatLng) -> float:
+    radius = 3958.8
+    lat1, lat2 = math.radians(left.lat), math.radians(right.lat)
+    lat_delta = math.radians(right.lat - left.lat)
+    lng_delta = math.radians(right.lng - left.lng)
+    value = math.sin(lat_delta / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(lng_delta / 2) ** 2
+    return 2 * radius * math.asin(math.sqrt(value))
 
 
 async def start_background_scans(
@@ -150,7 +204,7 @@ async def start_background_scans(
 ) -> list[NearbyPlaceSuggestion]:
     eligible = [
         suggestion
-        for suggestion in suggestions
+        for suggestion in sorted(suggestions, key=lambda item: item.scan_priority_rank or 999)
         if suggestion.evidence_status == "scan_needed" and suggestion.place.website_url
     ][:2]
     if not eligible:
@@ -201,6 +255,7 @@ def build_nearby_summary(
     candidate_count: int,
     scanned: list[NearbyPlaceSuggestion],
     scan_needed: list[NearbyPlaceSuggestion],
+    top_scan_candidates: list[NearbyPlaceSuggestion],
 ) -> str:
     if candidate_count == 0:
         return "I could not find nearby candidates in the current map area."
@@ -211,13 +266,21 @@ def build_nearby_summary(
                 f"Only one candidate was available. {only.place.name} scores {only.restaurant_fit_score}/100 "
                 f"with {bucket_reason(only)}. Search this area to compare more restaurants."
             )
-        return "Only one candidate was available, and it needs a menu scan before allergy comparison."
+        return f"Only one candidate was available. Start by scanning {only.place.name} before allergy comparison."
 
     place_word = "restaurants"
-    running_count = sum(item.evidence_status == "scan_running" for item in scan_needed)
     if not scanned:
-        suffix = f" Background scans are running for {running_count}." if running_count else ""
-        return f"I found {candidate_count} nearby {place_word}, but they need menu scans before comparison.{suffix}"
+        running = [item.place.name for item in scan_needed if item.evidence_status == "scan_running"]
+        if running:
+            return (
+                f"I found {candidate_count} nearby {place_word} in this area. I started menu scans for "
+                f"{format_names(running)}. I'll compare allergy fit once scanned evidence is ready."
+            )
+        names = [item.place.name for item in top_scan_candidates]
+        return (
+            f"I found {candidate_count} nearby {place_word} in this area. None have scanned menu evidence yet, "
+            f"so I can't compare allergy fit. Start by scanning the top {len(names)} candidates: {format_names(names)}."
+        )
 
     top = scanned[0]
     remaining = candidate_count - len(scanned)
@@ -245,17 +308,40 @@ def bucket_reason(suggestion: NearbyPlaceSuggestion) -> str:
     return f"{avoid} and {possible}"
 
 
+def format_names(names: list[str]) -> str:
+    if len(names) <= 1:
+        return names[0] if names else "the top candidate"
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{', '.join(names[:-1])}, and {names[-1]}"
+
+
 def trace_nearby_result(
     payload: NearbySuggestionRequest,
     suggestions: list[NearbyPlaceSuggestion],
     retrieval_mode: str,
+    top_scan_candidates: list[NearbyPlaceSuggestion],
 ) -> None:
     scanned = [item for item in suggestions if item.evidence_status == "scanned"]
     top = scanned[0] if scanned else (suggestions[0] if suggestions else None)
+    scan_started_count = sum(item.evidence_status == "scan_running" for item in suggestions)
+    flow_stage = (
+        "candidate_discovery"
+        if not suggestions
+        else "ranked_comparison"
+        if scanned
+        else "scan_started"
+        if scan_started_count
+        else "scan_needed"
+    )
     update_current_trace_metadata(
         candidate_count=len(suggestions),
         scanned_candidate_count=len(scanned),
         scan_needed_count=len(suggestions) - len(scanned),
+        scan_started_count=scan_started_count,
+        top_scan_candidates=[item.place.name for item in top_scan_candidates],
+        top_scan_priority_score=top.scan_priority_score if top and not scanned else None,
+        flow_stage=flow_stage,
         selected_allergens=[allergen.value for allergen in payload.allergens],
         top_ranked_place=top.place.name if top else None,
         restaurant_fit_score=top.restaurant_fit_score if top else None,
