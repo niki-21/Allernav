@@ -6,6 +6,8 @@ import type {
   MenuRefreshJob,
   NearbySuggestionResponse,
   PlaceDetailsResponse,
+  PlaceMenu,
+  PlaceSummary,
   ReviewRefreshJob,
   SearchResponse,
 } from "./types";
@@ -13,6 +15,8 @@ import type {
 const API_PREFIX = (process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "") + "/api";
 
 const MENU_SCAN_TIMEOUT_MESSAGE = "The scan took too long. Try again or open the restaurant panel.";
+const NEARBY_RAG_TIMEOUT_MESSAGE =
+  "This request took too long. Try a specific restaurant or scan the menu first.";
 
 export function menuScanErrorMessage(error: unknown): string {
   const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
@@ -34,6 +38,23 @@ export function menuScanErrorMessage(error: unknown): string {
   return rawMessage || "The menu scan could not finish. Try again or open the restaurant panel.";
 }
 
+export function nearbyRagErrorMessage(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const normalized = rawMessage.toLowerCase();
+  if (
+    normalized.includes("abort") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("signal")
+  ) {
+    return NEARBY_RAG_TIMEOUT_MESSAGE;
+  }
+  if (rawMessage.trim().startsWith("{") || rawMessage.trim().startsWith("[")) {
+    return "Nearby suggestions are temporarily unavailable. Try again shortly.";
+  }
+  return rawMessage || "Nearby suggestions are temporarily unavailable. Try again shortly.";
+}
+
 export function buildSearchPayload(query: string, center: LatLng, allergens: AllergyTag[]) {
   return {
     query,
@@ -53,49 +74,19 @@ export function buildNearbySuggestionPayload(
   question: string,
   center: LatLng,
   allergens: AllergyTag[],
-  candidatePlaceIds: string[],
+  candidatePlaces: PlaceSummary[],
 ) {
-  const useVisibleCandidates = shouldUseVisibleCandidates(question);
-  const candidates = useVisibleCandidates ? candidatePlaceIds : [];
+  const candidates = candidatePlaces.slice(0, 8);
   return {
     question,
     query: question,
     center,
     allergens,
-    candidate_place_ids: candidates,
+    candidate_place_ids: candidates.map((place) => place.id),
+    candidate_places: candidates,
     max_places: Math.min(8, Math.max(1, candidates.length || 6)),
     top_evidence: 3,
   };
-}
-
-export function shouldUseVisibleCandidates(question: string): boolean {
-  const text = question.toLowerCase();
-  const freshSearchTerms = [
-    "bagel",
-    "bakery",
-    "breakfast",
-    "brunch",
-    "burger",
-    "cafe",
-    "chinese",
-    "deli",
-    "ethiopian",
-    "french",
-    "gluten free",
-    "indian",
-    "italian",
-    "japanese",
-    "korean",
-    "mediterranean",
-    "mexican",
-    "pizza",
-    "ramen",
-    "sushi",
-    "thai",
-    "vegan",
-    "vegetarian",
-  ];
-  return !freshSearchTerms.some((term) => text.includes(term));
 }
 
 export function buildPlaceDetailsUrl(placeId: string, allergens: AllergyTag[]): string {
@@ -128,6 +119,17 @@ export async function fetchPlaceDetails(placeId: string, allergens: AllergyTag[]
   }
 
   return (await response.json()) as PlaceDetailsResponse;
+}
+
+export async function fetchPlaceMenu(placeId: string): Promise<PlaceMenu | null> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Menu refresh result failed with status ${response.status}.`);
+  }
+  const menu = (await response.json()) as PlaceMenu;
+  return menu.sections.length > 0 ? menu : null;
 }
 
 export async function refreshPlaceMenu(
@@ -196,17 +198,18 @@ export async function askNearbyPlaces(
   question: string,
   center: LatLng,
   allergens: AllergyTag[],
-  candidatePlaceIds: string[],
+  candidatePlaces: PlaceSummary[],
 ): Promise<NearbySuggestionResponse> {
   const response = await fetch(`${API_PREFIX}/rag/nearby-suggestions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(buildNearbySuggestionPayload(question, center, allergens, candidatePlaceIds)),
+    body: JSON.stringify(buildNearbySuggestionPayload(question, center, allergens, candidatePlaces)),
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const body = (await response.json().catch(() => null)) as { detail?: string; message?: string } | null;
+    throw new Error(body?.detail ?? body?.message ?? `Nearby suggestions failed with status ${response.status}.`);
   }
   return (await response.json()) as NearbySuggestionResponse;
 }

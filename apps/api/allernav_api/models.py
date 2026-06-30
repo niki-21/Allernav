@@ -344,6 +344,7 @@ class NearbySuggestionRequest(BaseModel):
     center: LatLng | None = None
     allergens: list[AllergyTag] = Field(default_factory=list)
     candidate_place_ids: list[str] = Field(default_factory=list)
+    candidate_places: list[PlaceListItem] = Field(default_factory=list)
     max_places: int = Field(default=6, ge=1, le=10)
     top_evidence: int = Field(default=3, ge=1, le=5)
 

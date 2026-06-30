@@ -226,28 +226,34 @@ export default function TrustPanel({
     menuRefreshJob?.indexing_status ??
     menuRefreshJob?.trace.find((step) => step.id === "search_index")?.status ??
     null;
+  const scanHasRun = Boolean(menuRefreshJob);
   const ragStatus =
     indexingStatus === "complete"
-      ? { className: "rag-ready", label: "RAG ready" }
+      ? { className: "rag-ready", label: "RAG index ready" }
       : indexingStatus === "pending" || indexingStatus === "running"
         ? { className: "rag-updating", label: "RAG index updating" }
         : indexingStatus === "failed"
           ? { className: "rag-unavailable", label: "RAG index unavailable" }
-          : { className: "rag-mode", label: "RAG: hybrid" };
-  const refreshFailed =
-    menuRefreshJob?.status === "failed" || menuRefreshJob?.status === "needs_background_refresh";
-  const scanHasRun = Boolean(menuRefreshJob);
+          : menuItemCount > 0
+            ? { className: "rag-ready", label: "RAG index ready" }
+            : scanHasRun
+              ? { className: "rag-updating", label: "RAG index updating" }
+              : null;
+  const refreshFailed = menuRefreshJob?.status === "failed";
+  const refreshPending =
+    isMenuLoading ||
+    ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "needs_background_refresh"].includes(
+      menuRefreshJob?.status ?? "",
+    );
   const ocrTrace = menuRefreshJob?.trace.find((step) => step.id === "document_ocr");
-  const ocrSummary =
+  const ocrStatus =
     data.menu?.extraction_method?.includes("azure_document_intelligence") || ocrTrace?.status === "complete"
-      ? "OCR: used"
-      : ocrTrace?.status === "skipped_no_document"
-        ? "OCR: skipped, no PDF/image menu found"
-        : ocrTrace?.status === "failed"
-          ? "OCR: failed"
-          : ocrTrace?.status === "running"
-            ? "OCR: checking menu documents"
-            : null;
+      ? { className: "ocr-used", label: "OCR used" }
+      : ocrTrace?.status === "running"
+        ? { className: "ocr-checking", label: "OCR checking" }
+        : scanHasRun || menuItemCount > 0
+          ? { className: "ocr-skipped", label: "OCR skipped" }
+          : null;
   const ratingLine = [
     data.rating ? `${data.rating.toFixed(1)} on Google` : null,
     data.user_rating_count ? `${data.user_rating_count.toLocaleString()} reviews` : null,
@@ -262,18 +268,6 @@ export default function TrustPanel({
         <h2>{data.name}</h2>
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
-        <div
-          className="place-status-row"
-          title={`Source confidence ${confidencePercent}%. Evidence fit ${data.score_summary.fit_score}/100.`}
-          aria-label="Menu and retrieval status"
-        >
-          <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
-            {menuItemCount > 0 ? "Menu found" : "Menu pending"}
-          </span>
-          <span className="needs-verification">Needs verification</span>
-          <span className={ragStatus.className}>{ragStatus.label}</span>
-          {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
-        </div>
       </div>
 
       <div className="detail-action-row compact-actions">
@@ -346,22 +340,39 @@ export default function TrustPanel({
 
       {activeTab === "menu" && (
         <div className="place-tab-panel">
+          <div
+            className="place-status-row menu-tab-status-row"
+            title={`Source confidence ${confidencePercent}%. Evidence fit ${data.score_summary.fit_score}/100.`}
+            aria-label="Menu and retrieval status"
+          >
+            <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
+              {menuItemCount > 0 ? "Menu found" : refreshPending ? "Menu scan running" : "No menu evidence"}
+            </span>
+            <span className="needs-verification">Needs verification</span>
+            {ragStatus && <span className={ragStatus.className}>{ragStatus.label}</span>}
+            {ocrStatus && <span className={ocrStatus.className}>{ocrStatus.label}</span>}
+            {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
+          </div>
           <div className="menu-source-row">
             <div>
               <strong>Menu</strong>
               <p>
                 {menuItemCount > 0
                   ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                  : refreshPending
+                    ? "Menu scan is still running."
                   : hasAgentDishEvidence
                   ? `${agentDishResults.length} agent dish result${agentDishResults.length === 1 ? "" : "s"} found, but the structured menu view is still being normalized.`
                   : scanHasRun
-                    ? "No reliable dish-level menu found."
+                    ? "No stored menu evidence yet."
                     : "No menu scanned yet."}
               </p>
               {menuEvidenceLine && <p className="muted-line">{menuEvidenceLine}</p>}
-              {ocrSummary && <p className="muted-line">{ocrSummary}</p>}
               {refreshFailed && menuItemCount > 0 && (
                 <p className="menu-refresh-warning">Latest saved menu shown; refresh failed.</p>
+              )}
+              {refreshPending && menuItemCount > 0 && (
+                <p className="muted-line">Latest saved menu shown while the refresh continues.</p>
               )}
             </div>
             {(data.menu?.source_url || data.menu?.document_url) && (
@@ -393,10 +404,10 @@ export default function TrustPanel({
             </div>
           )}
 
-          {isMenuLoading && menuSections.length === 0 ? (
+          {refreshPending && menuSections.length === 0 ? (
             <div className="menu-loading-state">
-              <strong>Loading menu evidence</strong>
-              <p>AllerNav is checking the restaurant website and linked menu documents.</p>
+              <strong>Menu scan is still running</strong>
+              <p>Extracted items will appear here as soon as the scan finishes.</p>
               <div className="skeleton skeleton-line" />
               <div className="skeleton skeleton-line" />
               <div className="skeleton skeleton-review" />
@@ -462,32 +473,31 @@ export default function TrustPanel({
             </article>
           ) : (
             <article className="empty-menu-state">
-              <strong>No reliable dish-level menu found</strong>
-              <p>
-                AllerNav checked available menu sources but did not find structured dish names with usable ingredient
-                context. This is insufficient evidence, not a verification signal.
-              </p>
+              <strong>No stored menu evidence yet</strong>
+              <p>Try the menu scan again or open the restaurant website to verify current menu information.</p>
               {data.website_uri && (
                 <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
                   Restaurant website
                 </a>
               )}
+              <button type="button" className="retry-button" onClick={onRefreshMenu}>
+                Retry menu scan
+              </button>
             </article>
           )}
 
           {(isMenuLoading || menuRefreshJob) && (
-            <details
-              className="menu-trace"
-              open={
-                isMenuLoading ||
-                menuRefreshJob?.status === "failed" ||
-                menuRefreshJob?.status === "needs_background_refresh"
-              }
-            >
+            <details className="menu-trace">
               <summary>
-                <strong>Menu RAG trace</strong>
+                <strong>Technical trace</strong>
                 <span className={`trace-status ${isMenuLoading ? "running" : indexingStatus ?? menuRefreshJob?.status ?? "idle"}`}>
-                  {isMenuLoading ? "Running" : indexingStatus ?? menuRefreshJob?.status ?? "Idle"}
+                  {refreshPending
+                    ? "Running"
+                    : refreshFailed
+                      ? "Needs attention"
+                      : indexingStatus === "complete" || menuRefreshJob?.status === "complete"
+                        ? "Complete"
+                        : "Available"}
                 </span>
               </summary>
               <div className="menu-trace-list">

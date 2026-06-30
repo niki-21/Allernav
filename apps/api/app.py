@@ -183,12 +183,8 @@ async def chat_endpoint(payload: ChatRequest) -> ChatResponse:
 @app.post("/api/rag/nearby-suggestions", response_model=NearbySuggestionResponse)
 async def nearby_suggestions_endpoint(
     payload: NearbySuggestionRequest,
-    client: GooglePlacesClient = Depends(get_places_client),
 ) -> NearbySuggestionResponse:
-    try:
-        return await suggest_nearby_places_service(payload, client)
-    except GooglePlacesError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return await suggest_nearby_places_service(payload)
 
 
 @app.post("/feedback", response_model=FeedbackResponse)

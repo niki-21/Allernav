@@ -172,7 +172,7 @@ export async function fetchBackendPlaceMenu(placeId: string): Promise<PlaceMenu 
   }
 
   try {
-    const response = await fetchWithTimeout(url, { cache: "no-store" }, timeoutMs("FASTAPI_READ_TIMEOUT_MS", 2500));
+    const response = await fetchWithTimeout(url, { cache: "no-store" }, timeoutMs("FASTAPI_READ_TIMEOUT_MS", 8000));
     if (!response.ok) {
       return null;
     }

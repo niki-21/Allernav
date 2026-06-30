@@ -1582,6 +1582,10 @@ body {
   margin-top: 2px;
 }
 
+.menu-tab-status-row {
+  margin: 0 0 2px;
+}
+
 .place-status-row span,
 .menu-status-chip {
   display: inline-flex;
@@ -1639,6 +1643,19 @@ body {
   border-color: #e8aaa5;
   background: #fce8e6;
   color: #a5221f;
+}
+
+.place-status-row .ocr-used {
+  border-color: #a8d5bd;
+  background: #eaf7ef;
+  color: #176b43;
+}
+
+.place-status-row .ocr-skipped,
+.place-status-row .ocr-checking {
+  border-color: #d7dadd;
+  background: #f1f3f4;
+  color: #5f6368;
 }
 
 .place-status-row .refresh-failed {

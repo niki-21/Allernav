@@ -5,11 +5,11 @@ import { buildFastApiUrl } from "../../../../server/fastapi.ts";
 export const runtime = "nodejs";
 
 function timeoutMs(): number {
-  const parsed = Number(process.env.FASTAPI_RAG_TIMEOUT_MS ?? "30000");
+  const parsed = Number(process.env.FASTAPI_RAG_TIMEOUT_MS ?? "60000");
   if (!Number.isFinite(parsed)) {
-    return 30000;
+    return 60000;
   }
-  return Math.max(1000, Math.min(30_000, Math.trunc(parsed)));
+  return Math.max(5000, Math.min(120_000, Math.trunc(parsed)));
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -50,11 +50,15 @@ export async function POST(request: Request) {
     const payload = await response.json().catch(() => null);
     return NextResponse.json(payload ?? { detail: "FastAPI nearby RAG returned no JSON." }, { status: response.status });
   } catch (error) {
+    const timedOut = error instanceof Error &&
+      (error.name === "AbortError" || error.name === "TimeoutError" || error.message.toLowerCase().includes("abort"));
     return NextResponse.json(
       {
-        detail: error instanceof Error ? error.message : "FastAPI nearby RAG timed out or failed.",
+        detail: timedOut
+          ? "This request took too long. Try a specific restaurant or scan the menu first."
+          : "Nearby suggestions are temporarily unavailable. Try again shortly.",
       },
-      { status: 502 },
+      { status: timedOut ? 504 : 502 },
     );
   }
 }

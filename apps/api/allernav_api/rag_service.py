@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -7,7 +8,6 @@ from typing import Any
 from urllib import error, request
 
 from .azure_search import detect_allergens_in_text, hybrid_search_menu
-from .google_places import GooglePlacesClient
 from .langchain_tracing import (
     ainvoke_traced_runnable,
     invoke_traced_runnable,
@@ -19,7 +19,7 @@ from .models import (
     AllergyTag,
     HybridSearchRequest,
     HybridSearchResult,
-    LatLng,
+    MenuSource,
     NearbyPlaceSuggestion,
     NearbySuggestionRequest,
     NearbySuggestionResponse,
@@ -39,25 +39,36 @@ except ImportError:  # pragma: no cover - optional local dependency
         return decorator
 
 
-DEFAULT_CENTER = LatLng(lat=40.741895, lng=-73.989308)
-
-
 @traceable(name="AllerNav Nearby Hybrid RAG", run_type="chain")
 async def suggest_nearby_places_service(
     payload: NearbySuggestionRequest,
-    client: GooglePlacesClient,
 ) -> NearbySuggestionResponse:
-    center = payload.center or DEFAULT_CENTER
-    candidates = collect_candidate_places(payload, center, client)
-    suggestions = [
-        build_place_suggestion(place, payload)
-        for place in candidates[: payload.max_places]
-    ]
+    candidates = payload.candidate_places[: payload.max_places]
+    cached_candidates = [(place, load_menu_source(place.id)) for place in candidates]
+    cached_candidates.sort(key=lambda item: item[1] is not None, reverse=True)
+    selected_candidates = cached_candidates[: min(3, len(cached_candidates))]
+    suggestions = list(
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(build_place_suggestion, place, payload, source)
+                for place, source in selected_candidates
+            )
+        )
+    )
     suggestions.sort(key=rank_suggestion, reverse=True)
     top_suggestions = suggestions[: min(3, len(suggestions))]
     evidence = [item for suggestion in top_suggestions for item in suggestion.evidence]
     missing_information = build_missing_information(top_suggestions)
     questions = build_recommended_questions(payload.allergens)
+    if not any(suggestion.menu_item_count > 0 for suggestion in top_suggestions):
+        return NearbySuggestionResponse(
+            answer="Open a restaurant and scan its menu first.",
+            retrieval_mode="cached_menu_required",
+            places=top_suggestions,
+            evidence=[],
+            missing_information=["No stored menu evidence yet."],
+            recommended_questions=questions,
+        )
     answer = await generate_nearby_answer(payload, top_suggestions, evidence, missing_information, questions)
     update_current_trace_metadata(
         restaurant_id=top_suggestions[0].place.id if len(top_suggestions) == 1 else None,
@@ -78,85 +89,11 @@ async def suggest_nearby_places_service(
     )
 
 
-def collect_candidate_places(
+def build_place_suggestion(
+    place: PlaceListItem,
     payload: NearbySuggestionRequest,
-    center: LatLng,
-    client: GooglePlacesClient,
-) -> list[PlaceListItem]:
-    if payload.candidate_place_ids:
-        places: list[PlaceListItem] = []
-        for place_id in payload.candidate_place_ids[: payload.max_places]:
-            try:
-                details = client.get_place_details(place_id)
-            except Exception:  # noqa: BLE001 - one bad place should not fail nearby RAG
-                continue
-            places.append(place_from_details(details))
-        return places
-
-    query = restaurant_search_query(payload.question, payload.query)
-    return client.search_places(query, center, max_results=payload.max_places)
-
-
-def restaurant_search_query(question: str, fallback: str = "") -> str:
-    text = f"{question} {fallback}".lower()
-    cuisine_terms = [
-        "bagel",
-        "bakery",
-        "breakfast",
-        "brunch",
-        "burger",
-        "cafe",
-        "chinese",
-        "deli",
-        "dinner",
-        "gluten free",
-        "ethiopian",
-        "french",
-        "indian",
-        "italian",
-        "japanese",
-        "korean",
-        "lunch",
-        "mediterranean",
-        "mexican",
-        "pizza",
-        "ramen",
-        "restaurant",
-        "salad",
-        "sushi",
-        "thai",
-        "vegan",
-        "vegetarian",
-    ]
-    matched = [term for term in cuisine_terms if term in text]
-    if not matched:
-        return "restaurants"
-    cuisine_matches = [term for term in matched if term != "restaurant"]
-    if cuisine_matches:
-        return f"{cuisine_matches[0]} restaurants"
-    if "restaurant" in matched or "restaurants" in text:
-        return "restaurants"
-    return f"{matched[0]} restaurants"
-
-
-def place_from_details(details: dict[str, Any]) -> PlaceListItem:
-    location = details.get("location") or {}
-    return PlaceListItem(
-        id=str(details["id"]),
-        name=str(details.get("name") or "Unknown place"),
-        address=details.get("address"),
-        location=LatLng(
-            lat=float(location.get("lat", 0.0)),
-            lng=float(location.get("lng", 0.0)),
-        ),
-        rating=details.get("rating"),
-        user_rating_count=details.get("user_rating_count"),
-        primary_type=details.get("primary_type"),
-    )
-
-
-def build_place_suggestion(place: PlaceListItem, payload: NearbySuggestionRequest) -> NearbyPlaceSuggestion:
-    source = load_menu_source(place.id)
+    source: MenuSource | None,
+) -> NearbyPlaceSuggestion:
     menu_item_count = sum(len(section.items) for section in source.sections) if source else 0
     matched_allergen_items = 0
     if source:
@@ -166,25 +103,27 @@ def build_place_suggestion(place: PlaceListItem, payload: NearbySuggestionReques
                 if any(allergen in payload.allergens for allergen in matched):
                     matched_allergen_items += 1
 
-    search_request = HybridSearchRequest(
-        query=payload.question,
-        restaurant_id=place.id,
-        allergens=payload.allergens,
-        top=payload.top_evidence,
-    )
-    search_response = invoke_traced_runnable(
-        name="AllerNav Azure Search Retriever",
-        value=search_request,
-        func=hybrid_search_menu,
-        metadata={
-            "restaurant_id": place.id,
-            "source_url": source.source_url if source else None,
-            "item_count": menu_item_count,
-            "retrieval_mode": "hybrid",
-            "allergens": [allergen.value for allergen in payload.allergens],
-        },
-    )
-    evidence = search_response.results
+    evidence: list[HybridSearchResult] = []
+    if source:
+        search_request = HybridSearchRequest(
+            query=payload.question,
+            restaurant_id=place.id,
+            allergens=payload.allergens,
+            top=payload.top_evidence,
+        )
+        search_response = invoke_traced_runnable(
+            name="AllerNav Azure Search Retriever",
+            value=search_request,
+            func=hybrid_search_menu,
+            metadata={
+                "restaurant_id": place.id,
+                "source_url": source.source_url,
+                "item_count": menu_item_count,
+                "retrieval_mode": "hybrid",
+                "allergens": [allergen.value for allergen in payload.allergens],
+            },
+        )
+        evidence = search_response.results
     update_current_trace_metadata(
         restaurant_id=place.id,
         item_count=menu_item_count,

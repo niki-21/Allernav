@@ -7,7 +7,7 @@ import {
   buildPlaceDetailsUrl,
   buildSearchPayload,
   menuScanErrorMessage,
-  shouldUseVisibleCandidates,
+  nearbyRagErrorMessage,
 } from "../api.ts";
 
 test("buildSearchPayload keeps query, center, and allergens aligned", () => {
@@ -42,12 +42,16 @@ test("buildMenuRefreshPayload includes restaurant name and website url", () => {
 });
 
 test("buildNearbySuggestionPayload includes current map candidates", () => {
+  const candidates = [
+    { id: "place-a", name: "Alpha", location: { lat: 40, lng: -73 } },
+    { id: "place-b", name: "Bravo", location: { lat: 40.1, lng: -73.1 } },
+  ];
   assert.deepEqual(
     buildNearbySuggestionPayload(
       "suggest dinner",
       { lat: 40, lng: -73 },
       ["sesame"],
-      ["place-a", "place-b"],
+      candidates,
     ),
     {
       question: "suggest dinner",
@@ -55,32 +59,36 @@ test("buildNearbySuggestionPayload includes current map candidates", () => {
       center: { lat: 40, lng: -73 },
       allergens: ["sesame"],
       candidate_place_ids: ["place-a", "place-b"],
+      candidate_places: candidates,
       max_places: 2,
       top_evidence: 3,
     },
   );
 });
 
-test("buildNearbySuggestionPayload starts fresh search for cuisine prompts", () => {
+test("buildNearbySuggestionPayload keeps visible candidates for cuisine prompts", () => {
+  const candidates = [
+    { id: "place-a", name: "Alpha", location: { lat: 40, lng: -73 } },
+    { id: "place-b", name: "Bravo", location: { lat: 40.1, lng: -73.1 } },
+  ];
   assert.deepEqual(
     buildNearbySuggestionPayload(
       "I want a french restaurant",
       { lat: 40, lng: -73 },
       ["sesame"],
-      ["place-a", "place-b"],
+      candidates,
     ),
     {
       question: "I want a french restaurant",
       query: "I want a french restaurant",
       center: { lat: 40, lng: -73 },
       allergens: ["sesame"],
-      candidate_place_ids: [],
-      max_places: 6,
+      candidate_place_ids: ["place-a", "place-b"],
+      candidate_places: candidates,
+      max_places: 2,
       top_evidence: 3,
     },
   );
-  assert.equal(shouldUseVisibleCandidates("Which visible place looks better?"), true);
-  assert.equal(shouldUseVisibleCandidates("Find sushi nearby"), false);
 });
 
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {
@@ -98,5 +106,16 @@ test("menuScanErrorMessage hides malformed JSON responses", () => {
   assert.equal(
     menuScanErrorMessage("{invalid-json"),
     "The scan took too long. Try again or open the restaurant panel.",
+  );
+});
+
+test("nearbyRagErrorMessage converts aborts and raw responses to product copy", () => {
+  assert.equal(
+    nearbyRagErrorMessage(new DOMException("This operation was aborted", "AbortError")),
+    "This request took too long. Try a specific restaurant or scan the menu first.",
+  );
+  assert.equal(
+    nearbyRagErrorMessage('{"detail":"upstream failed"}'),
+    "Nearby suggestions are temporarily unavailable. Try again shortly.",
   );
 });

@@ -27,7 +27,6 @@ from allernav_api.rag_service import (
     clean_llm_answer,
     generate_azure_openai_answer,
     generate_nearby_answer,
-    restaurant_search_query,
     suggest_nearby_places_service,
 )
 from fastapi.testclient import TestClient
@@ -460,8 +459,14 @@ class ApiTests(unittest.TestCase):
                         question="Where should I start for peanut allergy?",
                         allergens=[AllergyTag.PEANUT],
                         candidate_place_ids=["alpha"],
+                        candidate_places=[
+                            PlaceListItem(
+                                id="alpha",
+                                name="Alpha Cafe",
+                                location=LatLng(lat=38.9, lng=-77.0),
+                            )
+                        ],
                     ),
-                    client=FakePlacesClient(),
                 )
             )
             os.environ.pop("ALLERNAV_MENU_DB", None)
@@ -470,11 +475,27 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(response.evidence), 1)
         self.assertIn("verification", response.answer.lower())
 
-    def test_nearby_rag_normalizes_broad_assistant_questions_to_restaurants(self) -> None:
-        self.assertEqual(restaurant_search_query("Suggest nearby places here"), "restaurants")
-        self.assertEqual(restaurant_search_query("Suggest sushi options nearby"), "sushi restaurants")
-        self.assertEqual(restaurant_search_query("I want a french restaurant"), "french restaurants")
+    def test_nearby_rag_without_cached_menu_skips_retrieval_and_llm(self) -> None:
+        payload = NearbySuggestionRequest(
+            question="Where should I start for peanut allergy?",
+            allergens=[AllergyTag.PEANUT],
+            candidate_places=[
+                PlaceListItem(
+                    id="alpha",
+                    name="Alpha Cafe",
+                    location=LatLng(lat=38.9, lng=-77.0),
+                )
+            ],
+        )
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
+            "allernav_api.rag_service.hybrid_search_menu"
+        ) as hybrid_search, patch("allernav_api.rag_service.generate_nearby_answer") as explanation:
+            response = asyncio.run(suggest_nearby_places_service(payload))
 
+        self.assertEqual(response.answer, "Open a restaurant and scan its menu first.")
+        self.assertEqual(response.missing_information, ["No stored menu evidence yet."])
+        hybrid_search.assert_not_called()
+        explanation.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

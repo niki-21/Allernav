@@ -17,7 +17,9 @@ import {
   askRestaurant,
   fetchMenuRefreshJob,
   fetchPlaceDetails,
+  fetchPlaceMenu,
   menuScanErrorMessage,
+  nearbyRagErrorMessage,
   refreshPlaceMenu,
   searchPlaces,
 } from "@/lib/api";
@@ -30,6 +32,7 @@ import type {
   NearbySuggestionResponse,
   MenuRefreshJob,
   PlaceDetailState,
+  PlaceMenu,
   PlaceSummary,
 } from "@/lib/types";
 
@@ -74,14 +77,14 @@ export default function Home() {
           id: `running-${details.id}`,
           place_id: details.id,
           status: "running",
-          message: "Menu discovery is running.",
+          message: "Menu scan is still running.",
           item_count: 0,
           trace: [
             {
               id: "request",
               label: "Start menu discovery",
               status: "running",
-              detail: "Checking the restaurant website, linked documents, rendered pages, and configured search providers.",
+              detail: "Menu scan started.",
             },
           ],
           created_at: startedAt,
@@ -104,21 +107,48 @@ export default function Home() {
           job = {
             ...job,
             status: "needs_background_refresh",
-            message: "The durable menu job is still running. Reopen this place shortly to see the completed menu.",
+            message: "Menu scan is still running.",
           };
           setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
         }
-        const refreshedDetails = await fetchPlaceDetails(details.id, selectedAllergens);
-        setDetailStates((current) => {
-          const currentState = current[details.id];
-          if (!currentState || currentState.status !== "ready") {
-            return current;
+        let refreshedMenu: PlaceMenu | null = null;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          refreshedMenu = await fetchPlaceMenu(details.id);
+          if (refreshedMenu || job.status !== "complete") {
+            break;
           }
-          return applyPlaceDetailSuccess(current, details.id, {
-            ...refreshedDetails,
-            agent_recommendation: currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
+          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        }
+        if (refreshedMenu) {
+          setDetailStates((current) => {
+            const currentState = current[details.id];
+            if (!currentState || currentState.status !== "ready") {
+              return current;
+            }
+            return {
+              ...current,
+              [details.id]: {
+                status: "ready",
+                data: { ...currentState.data, menu: refreshedMenu },
+              },
+            };
           });
-        });
+          void fetchPlaceDetails(details.id, selectedAllergens)
+            .then((refreshedDetails) => {
+              setDetailStates((current) => {
+                const currentState = current[details.id];
+                if (!currentState || currentState.status !== "ready") {
+                  return current;
+                }
+                return applyPlaceDetailSuccess(current, details.id, {
+                  ...refreshedDetails,
+                  agent_recommendation:
+                    currentState.data.agent_recommendation ?? refreshedDetails.agent_recommendation,
+                });
+              });
+            })
+            .catch(() => undefined);
+        }
         if (job.status === "complete" && ["pending", "running"].includes(job.indexing_status ?? "")) {
           void (async () => {
             for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -435,7 +465,7 @@ export default function Home() {
         question,
         mapCenter,
         selectedAllergens,
-        rankedPlaces.slice(0, 8).map((place) => place.id),
+        rankedPlaces.slice(0, 8),
       );
       setNearbyAnswer(response);
       const suggestedPlaces = response.places.map((suggestion) => suggestion.place);
@@ -462,7 +492,7 @@ export default function Home() {
       }
     } catch (error) {
       setNearbyAskState("error");
-      setNearbyAskError(error instanceof Error ? error.message : "Nearby RAG failed.");
+      setNearbyAskError(nearbyRagErrorMessage(error));
       return;
     }
     setNearbyAskState("idle");
