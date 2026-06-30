@@ -476,6 +476,26 @@ textarea {
   font-weight: 750;
 }
 
+.menu-fit-summary {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid rgba(60, 64, 67, 0.12);
+}
+
+.menu-fit-summary strong {
+  color: #202124;
+  font-size: 0.96rem;
+  line-height: 1.35;
+}
+
+.menu-fit-summary p {
+  margin: 0;
+  color: #5f6368;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 .place-card-ai-headline {
   margin: 14px 0 0;
   color: var(--foreground);
@@ -1766,6 +1786,11 @@ body {
 
 .menu-risk-group.possible {
   border-top-color: #5f8f76;
+}
+
+.menu-risk-group.unknown {
+  border-color: rgba(95, 99, 104, 0.18);
+  background: #f8f9fa;
 }
 
 .menu-risk-group-header {

@@ -158,7 +158,7 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
     page_count: 2,
     extraction_confidence: 0.91,
     restaurant_fit_score: 47,
-    restaurant_fit_label: "Higher concern",
+    restaurant_fit_label: "Needs verification",
     avoid_count: 1,
     needs_check_count: 8,
     possible_lower_risk_count: 3,
@@ -188,7 +188,7 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
   assert.equal(menu?.page_count, 2);
   assert.equal(menu?.extraction_confidence, 0.91);
   assert.equal(menu?.restaurant_fit_score, 47);
-  assert.equal(menu?.restaurant_fit_label, "Higher concern");
+  assert.equal(menu?.restaurant_fit_label, "Needs verification");
   assert.equal(menu?.avoid_count, 1);
   assert.equal(menu?.needs_check_count, 8);
   assert.equal(menu?.possible_lower_risk_count, 3);

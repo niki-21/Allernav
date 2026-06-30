@@ -69,26 +69,28 @@ def score_restaurant_menu(
     }
     described_ratio = sum(bool((item.description or "").strip()) for item in classified) / item_count
     evidence_quality = min(1.0, max(0.0, source_confidence * 0.65 + described_ratio * 0.35))
+    menu_coverage = min(1.0, item_count / 10)
+    quality_and_coverage = min(1.0, evidence_quality * 0.7 + menu_coverage * 0.3)
     avoid_ratio = counts["avoid"] / item_count
     uncertainty_ratio = (counts["needs_check"] + counts["insufficient_info"]) / item_count
     possible_ratio = counts["possible_lower_risk"] / item_count
     score = round(
-        40
+        45
         + 35 * possible_ratio
-        + 15 * evidence_quality
-        - 25 * avoid_ratio
-        - 15 * uncertainty_ratio
+        + 10 * quality_and_coverage
+        - 20 * avoid_ratio
+        - 10 * uncertainty_ratio
     )
     score = max(0, min(100, score))
 
     if score >= 75:
         label = "Better candidate, still verify"
-    elif score >= 50:
+    elif score >= 55:
+        label = "Good candidate to ask about"
+    elif score >= 35:
         label = "Needs verification"
-    elif score >= 25:
-        label = "Higher concern"
     else:
-        label = "Scan needed or limited evidence"
+        label = "Limited fit / scan needed"
 
     if counts["avoid"]:
         reason = (

@@ -121,6 +121,19 @@ test("menu rows hide repeated confidence and RAG cards show one restaurant score
   assert.equal(pageSource.includes("nearbyBucketSummary(suggestion)"), true);
 });
 
+test("Menu tab leads with the fit score and possible lower-risk section", () => {
+  const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  const possibleIndex = source.indexOf('title: "Possible lower-risk items to ask about"');
+  const checkIndex = source.indexOf('title: "Needs staff check"');
+  const avoidIndex = source.indexOf('title: "Avoid for your allergies"');
+  const insufficientIndex = source.indexOf('title: "Insufficient info"');
+
+  assert.ok(source.includes("Restaurant allergy fit:"));
+  assert.ok(possibleIndex < checkIndex && checkIndex < avoidIndex && avoidIndex < insufficientIndex);
+  assert.ok(source.includes('<details className="menu-trace">'));
+  assert.equal(source.includes('<details className="menu-trace" open>'), false);
+});
+
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {
   assert.equal(
     menuScanErrorMessage(new DOMException("The operation was aborted due to timeout", "TimeoutError")),

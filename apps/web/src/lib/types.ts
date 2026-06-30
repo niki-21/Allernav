@@ -342,10 +342,10 @@ export interface NearbyPlaceSuggestion {
   restaurant_fit_score: number;
   restaurant_fit_label:
     | "Better candidate, still verify"
+    | "Good candidate to ask about"
     | "Needs verification"
     | "Scan needed"
-    | "Scan needed or limited evidence"
-    | "Higher concern";
+    | "Limited fit / scan needed";
   menu_item_count: number;
   matched_allergen_items: number;
   avoid_count: number;

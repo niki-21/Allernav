@@ -189,10 +189,10 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
     extraction_confidence: numberValue(menu.extraction_confidence),
     restaurant_fit_score: numberValue(menu.restaurant_fit_score),
     restaurant_fit_label: stringValue(menu.restaurant_fit_label),
-    avoid_count: numberValue(menu.avoid_count) ?? 0,
-    needs_check_count: numberValue(menu.needs_check_count) ?? 0,
-    possible_lower_risk_count: numberValue(menu.possible_lower_risk_count) ?? 0,
-    insufficient_info_count: numberValue(menu.insufficient_info_count) ?? 0,
+    avoid_count: numberValue(menu.avoid_count) ?? undefined,
+    needs_check_count: numberValue(menu.needs_check_count) ?? undefined,
+    possible_lower_risk_count: numberValue(menu.possible_lower_risk_count) ?? undefined,
+    insufficient_info_count: numberValue(menu.insufficient_info_count) ?? undefined,
     sections,
   };
 }

@@ -373,10 +373,10 @@ class NearbyPlaceSuggestion(BaseModel):
     restaurant_fit_score: int = Field(default=20, ge=0, le=100)
     restaurant_fit_label: Literal[
         "Better candidate, still verify",
+        "Good candidate to ask about",
         "Needs verification",
         "Scan needed",
-        "Scan needed or limited evidence",
-        "Higher concern",
+        "Limited fit / scan needed",
     ] = "Scan needed"
     menu_item_count: int = Field(default=0, ge=0)
     matched_allergen_items: int = Field(default=0, ge=0)

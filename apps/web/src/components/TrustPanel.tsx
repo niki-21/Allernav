@@ -217,31 +217,51 @@ export default function TrustPanel({
       verification: getMenuVerification(item, data.selected_allergens, data.menu?.extraction_confidence),
     })),
   );
+  const possibleMenuItems = classifiedMenuItems
+    .filter((entry) => entry.verification.label === "Possible lower-risk")
+    .sort((left, right) => (right.item.confidence ?? 0) - (left.item.confidence ?? 0));
+  const needsCheckMenuItems = classifiedMenuItems.filter((entry) => entry.verification.label === "Needs check");
+  const avoidMenuItems = classifiedMenuItems.filter((entry) => entry.verification.label === "Avoid");
+  const insufficientMenuItems = classifiedMenuItems.filter((entry) => entry.verification.label === "Insufficient info");
   const menuRiskGroups = [
     {
-      key: "avoid",
-      title: "Avoid for your allergies",
-      tone: "avoid",
-      items: classifiedMenuItems.filter((entry) => entry.verification.label === "Avoid").slice(0, 6),
+      key: "possible",
+      title: "Possible lower-risk items to ask about",
+      tone: "possible",
+      count: possibleMenuItems.length,
+      items: possibleMenuItems.slice(0, 5),
     },
     {
       key: "check",
       title: "Needs staff check",
       tone: "needs-check",
-      items: classifiedMenuItems
-        .filter((entry) => entry.verification.label === "Needs check" || entry.verification.label === "Insufficient info")
-        .slice(0, 6),
+      count: needsCheckMenuItems.length,
+      items: needsCheckMenuItems.slice(0, 6),
     },
     {
-      key: "possible",
-      title: "Possible lower-risk items to ask about",
-      tone: "possible",
-      items: classifiedMenuItems
-        .filter((entry) => entry.verification.label === "Possible lower-risk")
-        .sort((left, right) => (right.item.confidence ?? 0) - (left.item.confidence ?? 0))
-        .slice(0, 5),
+      key: "avoid",
+      title: "Avoid for your allergies",
+      tone: "avoid",
+      count: avoidMenuItems.length,
+      items: avoidMenuItems.slice(0, 6),
+    },
+    {
+      key: "insufficient",
+      title: "Insufficient info",
+      tone: "unknown",
+      count: insufficientMenuItems.length,
+      items: insufficientMenuItems.slice(0, 6),
     },
   ];
+  const menuBucketCounts = {
+    possible: data.menu?.possible_lower_risk_count ?? possibleMenuItems.length,
+    check: data.menu?.needs_check_count ?? needsCheckMenuItems.length,
+    avoid: data.menu?.avoid_count ?? avoidMenuItems.length,
+    insufficient: data.menu?.insufficient_info_count ?? insufficientMenuItems.length,
+  };
+  const restaurantFitScore = data.restaurant_fit_score ?? data.menu?.restaurant_fit_score ?? 20;
+  const restaurantFitLabel =
+    data.restaurant_fit_label ?? data.menu?.restaurant_fit_label ?? (menuItemCount > 0 ? "Needs verification" : "Scan needed");
   const reviewSnippets = data.review_snippets ?? [];
   const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
@@ -397,10 +417,18 @@ export default function TrustPanel({
             <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
               {menuItemCount > 0 ? "Menu found" : refreshPending ? "Menu scan running" : "No menu evidence"}
             </span>
-            <span className="needs-verification">Needs verification</span>
+            <span className="needs-verification">{restaurantFitLabel}</span>
             {ragStatus && <span className={ragStatus.className}>{ragStatus.label}</span>}
             {ocrStatus && <span className={ocrStatus.className}>{ocrStatus.label}</span>}
             {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
+          </div>
+          <div className="menu-fit-summary" aria-label="Restaurant allergy fit summary">
+            <strong>
+              Restaurant allergy fit: {restaurantFitScore}/100 · {restaurantFitLabel}
+            </strong>
+            <p>
+              {menuBucketCounts.possible} possible lower-risk · {menuBucketCounts.check} needs check · {menuBucketCounts.avoid} avoid · {menuBucketCounts.insufficient} insufficient info
+            </p>
           </div>
           <div className="menu-source-row">
             <div>
@@ -442,7 +470,7 @@ export default function TrustPanel({
                 <section key={group.key} className={`menu-risk-group ${group.tone}`}>
                   <div className="menu-risk-group-header">
                     <h3>{group.title}</h3>
-                    <span>{group.items.length}</span>
+                    <span>{group.count}</span>
                   </div>
                   {group.items.map(({ item, sectionTitle, verification }) => {
                     const tooltip = [item.description, verification.detail].filter(Boolean).join(" ");
