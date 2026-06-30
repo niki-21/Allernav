@@ -53,6 +53,19 @@ function nearbyRetrievalLabel(mode: string): string {
   return mode === "scanned_menu_evidence_needed" ? "Scanned menu evidence needed" : "Scanned menu comparison";
 }
 
+function candidateName(name?: string | null): string {
+  const cleaned = name?.trim();
+  return !cleaned || cleaned.toLowerCase() === "selected place" ? "This restaurant" : cleaned;
+}
+
+function nearbyBucketSummary(suggestion: NearbySuggestionResponse["places"][number]): string {
+  return [
+    `${suggestion.avoid_count} avoid`,
+    `${suggestion.needs_check_count} needs check`,
+    `${suggestion.possible_lower_risk_count} possible lower-risk`,
+  ].join(" · ");
+}
+
 export default function Home() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [places, setPlaces] = useState<PlaceSummary[]>([]);
@@ -65,6 +78,7 @@ export default function Home() {
   const [searchTargetPlaceId, setSearchTargetPlaceId] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [areaSearchCompleted, setAreaSearchCompleted] = useState(false);
   const [locationStatus, setLocationStatus] = useState<"idle" | "locating" | "denied">("idle");
   const [askResponses, setAskResponses] = useState<Record<string, AskRestaurantResponse>>({});
   const [askingPlaceId, setAskingPlaceId] = useState<string | null>(null);
@@ -268,6 +282,22 @@ export default function Home() {
             return;
           }
           setDetailStates((current) => applyPlaceDetailSuccess(current, place.id, details));
+          setPlaces((current) =>
+            current.map((item) =>
+              item.id === place.id
+                ? {
+                    ...item,
+                    name: candidateName(details.name),
+                    address: details.address,
+                    location: details.location,
+                    rating: details.rating,
+                    user_rating_count: details.user_rating_count,
+                    primary_type: details.primary_type,
+                    website_url: details.website_uri,
+                  }
+                : item,
+            ),
+          );
         } catch (error) {
           if (sequence !== requestSequence.current) {
             return;
@@ -300,7 +330,7 @@ export default function Home() {
       try {
         const response = await searchPlaces(nextQuery, nextCenter, allergens);
         if (sequence !== requestSequence.current) {
-          return;
+          return [];
         }
 
         const firstPlace = response.places[0] ?? null;
@@ -314,14 +344,17 @@ export default function Home() {
           setSearchCenter(focusedCenter);
           setMapCenter(focusedCenter);
           setDetailStates(seedPlaceDetailsState(response.places.map((place) => place.id)));
+          setAreaSearchCompleted(true);
         });
 
         void hydratePlaces(response.places, allergens, sequence);
+        return response.places;
       } catch (error) {
         if (sequence !== requestSequence.current) {
-          return;
+          return [];
         }
         setSearchError(error instanceof Error ? error.message : "Search failed.");
+        return [];
       } finally {
         if (sequence === requestSequence.current) {
           setIsSearching(false);
@@ -475,10 +508,20 @@ export default function Home() {
     setNearbyAskState("loading");
     setNearbyAskError(null);
     try {
-      const candidatePlaces = rankedPlaces.slice(0, 8).map((place) => {
+      let visiblePlaces = rankedPlaces;
+      if (!areaSearchCompleted || canSearchArea || visiblePlaces.length === 0) {
+        visiblePlaces = await runSearch(query.trim() || "restaurants", mapCenter, selectedAllergens);
+      }
+      if (visiblePlaces.length === 0) {
+        setNearbyAskState("error");
+        setNearbyAskError("Search this area first so AllerNav has restaurants to compare.");
+        return;
+      }
+      const candidatePlaces = visiblePlaces.slice(0, 8).map((place) => {
         const detailState = detailStates[place.id];
         return {
           ...place,
+          name: candidateName(detailState?.status === "ready" ? detailState.data.name : place.name),
           website_url: detailState?.status === "ready" ? detailState.data.website_uri : null,
         };
       });
@@ -579,7 +622,11 @@ export default function Home() {
                 <span>Agentic RAG</span>
                 <strong>Ask AllerNav</strong>
               </div>
-              <small>{rankedPlaces.length ? `${Math.min(8, rankedPlaces.length)} visible candidates` : "current map area"}</small>
+              <small>
+                {!areaSearchCompleted || canSearchArea || rankedPlaces.length === 0
+                  ? "Search this area first"
+                  : `${Math.min(8, rankedPlaces.length)} search-area candidate${rankedPlaces.length === 1 ? "" : "s"}`}
+              </small>
             </div>
             <form
               className="nearby-rag-form"
@@ -617,7 +664,7 @@ export default function Home() {
                           <b>{suggestion.restaurant_fit_score}/100</b>
                           <b>{suggestion.restaurant_fit_label}</b>
                         </span>
-                        <small>{suggestion.reason}</small>
+                        <small>{nearbyBucketSummary(suggestion)}</small>
                         <small className="nearby-rag-next">Next: {suggestion.next_action}</small>
                       </button>
                     ))}

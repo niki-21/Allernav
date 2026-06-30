@@ -294,6 +294,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(dumped["id"], "alpha")
         self.assertEqual(dumped["selected_allergens"], ["peanut"])
         self.assertIn("score_summary", dumped)
+        self.assertEqual(dumped["restaurant_fit_score"], 20)
+        self.assertEqual(dumped["restaurant_fit_label"], "Scan needed")
         self.assertGreaterEqual(len(dumped["evidence"]), 1)
         self.assertIn("explanation", dumped)
 
@@ -421,6 +423,8 @@ class ApiTests(unittest.TestCase):
         inline_index.assert_not_called()
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
+        self.assertGreater(menu.json()["restaurant_fit_score"], 20)
+        self.assertEqual(menu.json()["possible_lower_risk_count"], 1)
 
     def test_menu_refresh_queues_squarespace_image_job_when_azure_is_configured(self) -> None:
         menu_html = "".join(
@@ -511,7 +515,8 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(response.evidence), 1)
         self.assertEqual(
             response.answer,
-            "I found 1 nearby place and ranked Alpha Cafe using scanned menu evidence.",
+            f"Only one candidate was available. Alpha Cafe scores {response.places[0].restaurant_fit_score}/100 "
+            "with 1 avoid item and 1 possible lower-risk option. Search this area to compare more restaurants.",
         )
         self.assertEqual(response.places[0].evidence_status, "scanned")
         self.assertGreater(response.places[0].restaurant_fit_score, 20)
@@ -533,7 +538,10 @@ class ApiTests(unittest.TestCase):
         ) as hybrid_search, patch("allernav_api.rag_service.generate_nearby_answer") as explanation:
             response = asyncio.run(suggest_nearby_places_service(payload))
 
-        self.assertEqual(response.answer, "I found 1 nearby place, but it needs a menu scan before comparison.")
+        self.assertEqual(
+            response.answer,
+            "Only one candidate was available, and it needs a menu scan before allergy comparison.",
+        )
         self.assertEqual(response.missing_information, ["Some nearby places do not have scanned menu evidence yet."])
         self.assertEqual(response.places[0].evidence_status, "scan_needed")
         self.assertEqual(response.scan_needed_places[0].id, "alpha")
@@ -600,9 +608,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual({place.place.id for place in response.places}, {"alpha", "bravo", "charlie"})
         scanned = [place for place in response.places if place.evidence_status == "scanned"]
         self.assertEqual(len(scanned), 2)
+        self.assertIn("I found 3 nearby restaurants. 2 have scanned menu evidence.", response.answer)
         self.assertTrue(all(place.evidence_count == 1 for place in scanned))
         self.assertEqual(response.scan_needed_places[0].id, "charlie")
         self.assertTrue(all(place.reason for place in response.places))
+
+    def test_nearby_rag_replaces_placeholder_place_name(self) -> None:
+        payload = NearbySuggestionRequest(
+            allergens=[AllergyTag.FISH],
+            candidate_places=[
+                PlaceListItem(id="native", name="Selected place", location=LatLng(lat=40, lng=-73))
+            ],
+        )
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None):
+            response = asyncio.run(suggest_nearby_places_service(payload))
+
+        self.assertEqual(response.places[0].place.name, "This restaurant")
+        self.assertNotIn("Selected place", response.answer)
 
     def test_nearby_rag_starts_at_most_two_background_scans(self) -> None:
         candidates = [

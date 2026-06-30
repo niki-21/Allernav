@@ -157,6 +157,11 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
     extraction_method: "azure_document_intelligence_read",
     page_count: 2,
     extraction_confidence: 0.91,
+    restaurant_fit_score: 47,
+    restaurant_fit_label: "Higher concern",
+    avoid_count: 1,
+    needs_check_count: 8,
+    possible_lower_risk_count: 3,
     sections: [
       {
         title: "Crepes",
@@ -182,6 +187,11 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
   assert.equal(menu?.extraction_method, "azure_document_intelligence_read");
   assert.equal(menu?.page_count, 2);
   assert.equal(menu?.extraction_confidence, 0.91);
+  assert.equal(menu?.restaurant_fit_score, 47);
+  assert.equal(menu?.restaurant_fit_label, "Higher concern");
+  assert.equal(menu?.avoid_count, 1);
+  assert.equal(menu?.needs_check_count, 8);
+  assert.equal(menu?.possible_lower_risk_count, 3);
   assert.equal(menu?.menu_version, "May 2026");
   assert.equal(menu?.document_urls?.length, 2);
   assert.equal(menu?.sections[0]?.items[0]?.source_page, 1);

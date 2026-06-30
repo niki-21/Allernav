@@ -46,6 +46,7 @@ test("buildNearbySuggestionPayload includes current map candidates", () => {
   const candidates = [
     { id: "place-a", name: "Alpha", location: { lat: 40, lng: -73 } },
     { id: "place-b", name: "Bravo", location: { lat: 40.1, lng: -73.1 } },
+    { id: "place-c", name: "Charlie", location: { lat: 40.2, lng: -73.2 } },
   ];
   assert.deepEqual(
     buildNearbySuggestionPayload(
@@ -59,10 +60,10 @@ test("buildNearbySuggestionPayload includes current map candidates", () => {
       query: "suggest dinner",
       center: { lat: 40, lng: -73 },
       allergens: ["sesame"],
-      candidate_place_ids: ["place-a", "place-b"],
+      candidate_place_ids: ["place-a", "place-b", "place-c"],
       candidate_places: candidates,
       allow_background_scan: false,
-      max_places: 2,
+      max_places: 3,
       top_evidence: 3,
     },
   );
@@ -110,6 +111,14 @@ test("TrustPanel does not duplicate agent dish evidence in the menu tab", () => 
   const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
   assert.equal(source.includes("Agent dish evidence"), false);
   assert.equal(source.includes("Dish evidence found by agent analysis"), false);
+});
+
+test("menu rows hide repeated confidence and RAG cards show one restaurant score", () => {
+  const trustPanelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(trustPanelSource.includes("confidenceText"), false);
+  assert.equal((pageSource.match(/suggestion\.restaurant_fit_score/g) ?? []).length, 1);
+  assert.equal(pageSource.includes("nearbyBucketSummary(suggestion)"), true);
 });
 
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {

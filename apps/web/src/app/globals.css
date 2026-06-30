@@ -469,6 +469,13 @@ textarea {
   color: #7a6c62;
 }
 
+.place-card-fit {
+  margin: 4px 0 0;
+  color: #3f6459;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
 .place-card-ai-headline {
   margin: 14px 0 0;
   color: var(--foreground);

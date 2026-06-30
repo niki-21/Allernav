@@ -73,20 +73,22 @@ def score_restaurant_menu(
     uncertainty_ratio = (counts["needs_check"] + counts["insufficient_info"]) / item_count
     possible_ratio = counts["possible_lower_risk"] / item_count
     score = round(
-        50
-        + 25 * possible_ratio
+        40
+        + 35 * possible_ratio
         + 15 * evidence_quality
-        - 30 * avoid_ratio
+        - 25 * avoid_ratio
         - 15 * uncertainty_ratio
     )
     score = max(0, min(100, score))
 
-    if avoid_ratio >= 0.3 or score < 40:
-        label = "Higher concern"
-    elif score >= 65 and counts["possible_lower_risk"] > 0:
-        label = "Best current candidate"
-    else:
+    if score >= 75:
+        label = "Better candidate, still verify"
+    elif score >= 50:
         label = "Needs verification"
+    elif score >= 25:
+        label = "Higher concern"
+    else:
+        label = "Scan needed or limited evidence"
 
     if counts["avoid"]:
         reason = (

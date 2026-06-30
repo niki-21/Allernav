@@ -140,6 +140,12 @@ export interface PlaceMenu {
   extraction_method?: string | null;
   page_count?: number | null;
   extraction_confidence?: number | null;
+  restaurant_fit_score?: number | null;
+  restaurant_fit_label?: string | null;
+  avoid_count?: number;
+  needs_check_count?: number;
+  possible_lower_risk_count?: number;
+  insufficient_info_count?: number;
   sections: MenuSection[];
 }
 
@@ -289,6 +295,8 @@ export interface PlaceDetailsResponse extends PlaceSummary {
   google_review_uri: string;
   selected_allergens: AllergyTag[];
   score_summary: PlaceScoreSummary;
+  restaurant_fit_score?: number | null;
+  restaurant_fit_label?: string | null;
   evidence: ReviewEvidence[];
   review_snippets: PlaceReviewSnippet[];
   review_source_summary?: ReviewSourceSummary;
@@ -332,7 +340,12 @@ export interface NearbyPlaceSuggestion {
   evidence_status: "scanned" | "scan_needed" | "scan_running" | "scan_failed";
   scan_job_id?: string | null;
   restaurant_fit_score: number;
-  restaurant_fit_label: "Best current candidate" | "Needs verification" | "Scan needed" | "Higher concern";
+  restaurant_fit_label:
+    | "Better candidate, still verify"
+    | "Needs verification"
+    | "Scan needed"
+    | "Scan needed or limited evidence"
+    | "Higher concern";
   menu_item_count: number;
   matched_allergen_items: number;
   avoid_count: number;

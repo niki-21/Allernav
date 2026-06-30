@@ -103,17 +103,15 @@ function getMenuVerification(
     ),
   );
   const confidence = item.confidence ?? item.ocr_confidence ?? fallbackConfidence;
-  const confidenceText = typeof confidence === "number" ? `${Math.round(confidence * 100)}% evidence confidence` : null;
-  const detail = [item.risk_reasons?.join(" "), item.verification_question].filter(Boolean).join(" ");
+  const confidenceDetail = typeof confidence === "number" ? `${Math.round(confidence * 100)}% evidence confidence.` : null;
+  const detail = [item.risk_reasons?.join(" "), item.verification_question, confidenceDetail].filter(Boolean).join(" ");
 
   if (item.risk_label === "avoid" || detectedAllergens.length > 0) {
     const allergenList = detectedAllergens.map(formatAllergen).join(", ");
     return {
       label: "Avoid",
       tone: "avoid",
-      metadata: [allergenList ? `${allergenList} detected` : "selected allergen detected", confidenceText]
-        .filter(Boolean)
-        .join(" · "),
+      metadata: allergenList ? `${allergenList} detected` : "selected allergen detected",
       detail: detail || `Selected allergen evidence was detected: ${allergenList}.`,
     };
   }
@@ -122,7 +120,7 @@ function getMenuVerification(
     return {
       label: "Needs check",
       tone: "needs-check",
-      metadata: ["preparation needs staff review", confidenceText].filter(Boolean).join(" · "),
+      metadata: "preparation needs staff review",
       detail: detail || "Preparation or ingredient wording needs staff verification.",
     };
   }
@@ -131,24 +129,15 @@ function getMenuVerification(
     return {
       label: "Insufficient info",
       tone: "unknown",
-      metadata: ["ingredient details missing", confidenceText].filter(Boolean).join(" · "),
+      metadata: "ingredient details missing",
       detail: detail || "The menu source does not provide enough ingredient or preparation detail.",
-    };
-  }
-
-  if (typeof confidence === "number" && confidence < 0.62) {
-    return {
-      label: "Needs check",
-      tone: "needs-check",
-      metadata: ["source evidence is weak", confidenceText].filter(Boolean).join(" · "),
-      detail: detail || "The source evidence needs staff verification.",
     };
   }
 
   return {
     label: "Possible lower-risk",
     tone: typeof confidence === "number" && confidence < 0.72 ? "possible-weak" : "possible",
-    metadata: ["no selected allergen detected", confidenceText, "verify prep"].filter(Boolean).join(" · "),
+    metadata: "no selected allergen detected · verify prep",
     detail: detail || "No selected allergen was detected in the available menu text. Verify preparation with staff.",
   };
 }

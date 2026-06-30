@@ -29,13 +29,17 @@ const PlaceCard = forwardRef<HTMLButtonElement, PlaceCardProps>(function PlaceCa
   return (
     <button ref={ref} type="button" className={`place-card ${selected ? "selected" : ""}`} onClick={onSelect}>
       <p className="place-card-title">{displayPlace.name}</p>
+      {isReady && detailState.data.restaurant_fit_score != null && (
+        <p className="place-card-fit">
+          {detailState.data.restaurant_fit_score}/100 · {detailState.data.restaurant_fit_label ?? "Needs verification"}
+        </p>
+      )}
       <p className="place-card-address">{displayPlace.address ?? "Address unavailable"}</p>
 
       <p className="place-card-meta">{formatRating(displayPlace.rating, displayPlace.user_rating_count)}</p>
 
       {detailState?.status === "error" && <p className="place-card-error">Details unavailable right now.</p>}
 
-      {isReady && <p className="place-card-meta">Evidence score {detailState.data.score_summary.fit_score}/100 · verify menu</p>}
     </button>
   );
 });

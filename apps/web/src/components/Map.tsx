@@ -165,7 +165,7 @@ export default function Map({
           : searchCenter;
         onNativePlaceSelect({
           id: placeId,
-          name: "Selected place",
+          name: "This restaurant",
           address: null,
           location,
           rating: null,

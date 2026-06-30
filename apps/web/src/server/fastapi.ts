@@ -34,6 +34,12 @@ type BackendPlaceMenu = {
   extraction_method?: unknown;
   page_count?: unknown;
   extraction_confidence?: unknown;
+  restaurant_fit_score?: unknown;
+  restaurant_fit_label?: unknown;
+  avoid_count?: unknown;
+  needs_check_count?: unknown;
+  possible_lower_risk_count?: unknown;
+  insufficient_info_count?: unknown;
   sections?: unknown;
 };
 
@@ -181,6 +187,12 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
     extraction_method: stringValue(menu.extraction_method),
     page_count: numberValue(menu.page_count),
     extraction_confidence: numberValue(menu.extraction_confidence),
+    restaurant_fit_score: numberValue(menu.restaurant_fit_score),
+    restaurant_fit_label: stringValue(menu.restaurant_fit_label),
+    avoid_count: numberValue(menu.avoid_count) ?? 0,
+    needs_check_count: numberValue(menu.needs_check_count) ?? 0,
+    possible_lower_risk_count: numberValue(menu.possible_lower_risk_count) ?? 0,
+    insufficient_info_count: numberValue(menu.insufficient_info_count) ?? 0,
     sections,
   };
 }

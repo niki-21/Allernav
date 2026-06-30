@@ -295,6 +295,8 @@ export async function getPlaceDetailsService(
     google_review_uri: `https://search.google.com/local/writereview?placeid=${encodeURIComponent(place.id)}`,
     selected_allergens: selectedAllergens,
     score_summary: scoreSummary,
+    restaurant_fit_score: menu?.restaurant_fit_score ?? null,
+    restaurant_fit_label: menu?.restaurant_fit_label ?? null,
     evidence,
     review_snippets: prioritizedReviews
       .map((review) => ({

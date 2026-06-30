@@ -83,6 +83,7 @@ def build_place_suggestion(
     payload: NearbySuggestionRequest,
     source: MenuSource | None,
 ) -> NearbyPlaceSuggestion:
+    place = place.model_copy(update={"name": display_place_name(place.name)})
     fit = score_restaurant_menu(source, payload.allergens)
 
     evidence: list[HybridSearchResult] = []
@@ -196,25 +197,45 @@ def build_nearby_summary(
 ) -> str:
     if candidate_count == 0:
         return "I could not find nearby candidates in the current map area."
-    place_word = "place" if candidate_count == 1 else "places"
+    if candidate_count == 1:
+        only = scanned[0] if scanned else scan_needed[0]
+        if only.evidence_status == "scanned":
+            return (
+                f"Only one candidate was available. {only.place.name} scores {only.restaurant_fit_score}/100 "
+                f"with {bucket_reason(only)}. Search this area to compare more restaurants."
+            )
+        return "Only one candidate was available, and it needs a menu scan before allergy comparison."
+
+    place_word = "restaurants"
     running_count = sum(item.evidence_status == "scan_running" for item in scan_needed)
     if not scanned:
         suffix = f" Background scans are running for {running_count}." if running_count else ""
-        need_phrase = "it needs a menu scan" if candidate_count == 1 else "they need menu scans"
-        return f"I found {candidate_count} nearby {place_word}, but {need_phrase} before comparison.{suffix}"
-    if len(scanned) == 1:
-        other_count = max(0, candidate_count - 1)
-        if other_count == 0:
-            return f"I found 1 nearby place and ranked {scanned[0].place.name} using scanned menu evidence."
-        other_word = "place" if other_count == 1 else "places"
-        return (
-            f"I found {candidate_count} nearby {place_word}. Only {scanned[0].place.name} has scanned menu evidence "
-            f"right now, so I can rank it but the other {other_count} {other_word} need menu scans before comparison."
-        )
+        return f"I found {candidate_count} nearby {place_word}, but they need menu scans before comparison.{suffix}"
+
+    top = scanned[0]
+    remaining = candidate_count - len(scanned)
+    scan_sentence = f" Scan the remaining {remaining} places to compare." if remaining else ""
     return (
-        f"I found {candidate_count} nearby {place_word} and ranked {len(scanned)} with scanned menu evidence; "
-        f"{len(scan_needed)} still need menu scans before comparison."
+        f"I found {candidate_count} nearby {place_word}. {len(scanned)} have scanned menu evidence. "
+        f"{top.place.name} scores {top.restaurant_fit_score}/100 because it has {bucket_reason(top)}."
+        f"{scan_sentence}"
     )
+
+
+def display_place_name(name: str | None) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned or cleaned.lower() == "selected place":
+        return "This restaurant"
+    return cleaned
+
+
+def bucket_reason(suggestion: NearbyPlaceSuggestion) -> str:
+    avoid = f"{suggestion.avoid_count} avoid item{'s' if suggestion.avoid_count != 1 else ''}"
+    possible = (
+        f"{suggestion.possible_lower_risk_count} possible lower-risk option"
+        f"{'s' if suggestion.possible_lower_risk_count != 1 else ''}"
+    )
+    return f"{avoid} and {possible}"
 
 
 def trace_nearby_result(

@@ -23,6 +23,27 @@ def test_restaurant_score_penalizes_selected_allergen_matches() -> None:
     assert lower_risk.possible_lower_risk_count == 1
     assert concern.avoid_count == 1
     assert concern.score < lower_risk.score
+    assert lower_risk.label == "Better candidate, still verify"
+    assert concern.label == "Higher concern"
+
+
+def test_restaurant_score_rewards_possible_lower_risk_ratio() -> None:
+    mostly_possible = score_restaurant_menu(
+        menu_source(
+            [
+                MenuItem(name="Herb Rice", description="Steamed rice with herbs and lemon"),
+                MenuItem(name="Roasted Vegetables", description="Seasonal vegetables roasted with olive oil"),
+            ]
+        ),
+        [AllergyTag.FISH],
+    )
+    mostly_checks = score_restaurant_menu(
+        menu_source([MenuItem(name="House Curry"), MenuItem(name="Chef Special")]),
+        [AllergyTag.FISH],
+    )
+
+    assert mostly_possible.possible_lower_risk_count == 2
+    assert mostly_possible.score > mostly_checks.score
 
 
 def test_restaurant_score_does_not_reward_menu_size_alone() -> None:

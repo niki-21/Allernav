@@ -43,6 +43,7 @@ from .models import (
     SearchIndexResponse,
     UserProfileResponse,
 )
+from .restaurant_scoring import RestaurantFitScore, score_restaurant_menu
 from .apify_reviews import fetch_apify_reviews, load_cached_reviews
 from .scoring import analyze_place
 
@@ -98,6 +99,9 @@ async def get_place_details_service(
     summary, evidence, explanation = analyze_place(place, selected_allergens)
     menu_source = load_menu_source(place["id"])
     menu = load_place_menu(place["id"]) if menu_source else None
+    restaurant_fit = score_restaurant_menu(menu_source, selected_allergens)
+    if menu:
+        menu = menu.model_copy(update=restaurant_fit_menu_fields(restaurant_fit))
     if not summary.fit_score:
         summary.fit_score = summary.score
     if summary.fit_verdict is None:
@@ -144,6 +148,8 @@ async def get_place_details_service(
         google_review_uri=f"https://search.google.com/local/writereview?placeid={place['id']}",
         selected_allergens=selected_allergens,
         score_summary=summary,
+        restaurant_fit_score=restaurant_fit.score,
+        restaurant_fit_label=restaurant_fit.label,
         evidence=evidence,
         review_snippets=[
             {
@@ -177,7 +183,21 @@ async def get_place_details_service(
 
 
 async def get_place_menu_service(place_id: str, allergens: list[AllergyTag] | None = None) -> PlaceMenu:
-    return classify_place_menu(load_place_menu(place_id), allergens or [])
+    selected_allergens = allergens or []
+    menu = classify_place_menu(load_place_menu(place_id), selected_allergens)
+    fit = score_restaurant_menu(load_menu_source(place_id), selected_allergens)
+    return menu.model_copy(update=restaurant_fit_menu_fields(fit))
+
+
+def restaurant_fit_menu_fields(fit: RestaurantFitScore) -> dict[str, object]:
+    return {
+        "restaurant_fit_score": fit.score,
+        "restaurant_fit_label": fit.label,
+        "avoid_count": fit.avoid_count,
+        "needs_check_count": fit.needs_check_count,
+        "possible_lower_risk_count": fit.possible_lower_risk_count,
+        "insufficient_info_count": fit.insufficient_info_count,
+    }
 
 
 async def get_place_reviews_service(place_id: str) -> list[PlaceReviewSnippet]:

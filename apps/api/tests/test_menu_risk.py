@@ -23,6 +23,15 @@ def test_tandoori_salmon_is_avoid_for_fish() -> None:
     assert result.matched_allergens == [AllergyTag.FISH]
 
 
+def test_ihop_style_fish_platter_is_avoid_for_fish() -> None:
+    result = classify_menu_item(
+        MenuItem(name="Crispy Fish & Fries Platter", description="Crispy battered fish served with fries."),
+        [AllergyTag.FISH],
+    )
+    assert result.risk_label == "avoid"
+    assert result.matched_allergens == [AllergyTag.FISH]
+
+
 def test_basmati_rice_with_context_is_possible_lower_risk() -> None:
     result = classify_menu_item(
         MenuItem(name="Basmati Rice", description="Steamed long-grain basmati rice with herbs."),
