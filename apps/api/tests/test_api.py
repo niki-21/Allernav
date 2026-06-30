@@ -187,6 +187,20 @@ class ApiTests(unittest.TestCase):
         with patch.dict("os.environ", {**base, "AZURE_OPENAI_CHAT_API_VERSION": "2024-10-21"}, clear=True):
             self.assertTrue(TestClient(app).get("/health").json()["environment"]["azure_openai_chat"])
 
+    def test_storage_debug_returns_sanitized_diagnostics(self) -> None:
+        diagnostics = {
+            "supabase_env_configured": True,
+            "supabase_menu_records_read_ok": True,
+            "supabase_menu_refresh_jobs_write_ok": False,
+            "last_supabase_error": "Supabase HTTP 400: missing column job_json",
+        }
+        with patch("app.supabase_store.storage_diagnostics", return_value=diagnostics):
+            response = TestClient(app).get("/api/debug/storage")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), diagnostics)
+        self.assertNotIn("service_role_key", response.text)
+
     def test_menu_refresh_mode_defaults_and_local_override(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(menu_refresh_mode(), "auto")
@@ -210,6 +224,9 @@ class ApiTests(unittest.TestCase):
             clear=True,
         ), patch("allernav_api.service.supabase_store.configured", return_value=True), patch(
             "allernav_api.service.supabase_store.save_menu_refresh_job", return_value=False
+        ), patch(
+            "allernav_api.service.supabase_store.last_error",
+            return_value="Supabase HTTP 400 Bad Request: missing column job_json",
         ), patch("allernav_api.service._discover_squarespace_image_set", return_value=None), patch(
             "allernav_api.service._create_local_menu_refresh_job", return_value=fallback_job
         ) as local_refresh:
@@ -223,6 +240,8 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(result.id, "local-fallback")
         local_refresh.assert_called_once()
+        self.assertIn("Cloud job could not be saved", local_refresh.call_args.kwargs["fallback_detail"])
+        self.assertIn("missing column job_json", local_refresh.call_args.kwargs["fallback_detail"])
 
     def test_allowed_origins_include_localhost_defaults(self) -> None:
         origins = allowed_origins()
@@ -473,7 +492,11 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.places[0].place.id, "alpha")
         self.assertGreaterEqual(len(response.evidence), 1)
-        self.assertIn("verification", response.answer.lower())
+        self.assertEqual(
+            response.answer,
+            "I only have stored menu evidence for Alpha Cafe right now. "
+            "Scan more nearby restaurants to compare candidates.",
+        )
 
     def test_nearby_rag_without_cached_menu_skips_retrieval_and_llm(self) -> None:
         payload = NearbySuggestionRequest(
@@ -496,6 +519,69 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.missing_information, ["No stored menu evidence yet."])
         hybrid_search.assert_not_called()
         explanation.assert_not_called()
+
+    def test_nearby_rag_evaluates_multiple_visible_candidate_ids(self) -> None:
+        candidates = [
+            PlaceListItem(id="alpha", name="Alpha Cafe", location=LatLng(lat=40.0, lng=-73.0)),
+            PlaceListItem(id="bravo", name="Bravo Grill", location=LatLng(lat=40.01, lng=-73.01)),
+            PlaceListItem(id="charlie", name="Charlie Deli", location=LatLng(lat=40.02, lng=-73.02)),
+        ]
+        sources = {
+            "alpha": MenuSource(
+                source_type=SourceType.RESTAURANT_WEBSITE,
+                source_url="https://alpha.example/menu",
+                sections=[MenuSection(title="Mains", items=[MenuItem(name="Rice Bowl", description="Rice and herbs")])],
+            ),
+            "bravo": MenuSource(
+                source_type=SourceType.RESTAURANT_WEBSITE,
+                source_url="https://bravo.example/menu",
+                sections=[MenuSection(title="Mains", items=[MenuItem(name="Grilled Chicken", description="Chicken and vegetables")])],
+            ),
+        }
+
+        def load_source(place_id: str):  # noqa: ANN202
+            return sources.get(place_id)
+
+        def search(payload):  # noqa: ANN001, ANN202
+            return type(
+                "SearchResponse",
+                (),
+                {
+                    "results": [
+                        HybridSearchResult(
+                            id=f"{payload.restaurant_id}-evidence",
+                            restaurant_id=payload.restaurant_id,
+                            restaurant_name=next(place.name for place in candidates if place.id == payload.restaurant_id),
+                            dish_name="Candidate dish",
+                            source_type=SourceType.RESTAURANT_WEBSITE,
+                            source_url=f"https://{payload.restaurant_id}.example/menu",
+                            raw_text="Candidate dish with listed ingredients",
+                            citation_label="Official menu",
+                            citation_text="Candidate dish with listed ingredients",
+                        )
+                    ]
+                },
+            )()
+
+        request_payload = NearbySuggestionRequest(
+            question="Suggest nearby places",
+            allergens=[AllergyTag.SESAME],
+            candidate_place_ids=[place.id for place in candidates],
+            candidate_places=candidates,
+        )
+        with patch("allernav_api.rag_service.load_menu_source", side_effect=load_source), patch(
+            "allernav_api.rag_service.hybrid_search_menu", side_effect=search
+        ), patch(
+            "allernav_api.rag_service.generate_nearby_answer",
+            new=AsyncMock(return_value="Compare Alpha Cafe and Bravo Grill using cited menu evidence."),
+        ):
+            response = asyncio.run(suggest_nearby_places_service(request_payload))
+
+        self.assertEqual({place.place.id for place in response.places}, {"alpha", "bravo", "charlie"})
+        cached = [place for place in response.places if place.menu_item_count > 0]
+        self.assertEqual(len(cached), 2)
+        self.assertTrue(all(place.evidence_count == 1 for place in cached))
+        self.assertTrue(all(place.reason for place in response.places))
 
 if __name__ == "__main__":
     unittest.main()

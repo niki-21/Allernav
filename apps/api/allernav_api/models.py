@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -163,6 +164,11 @@ class MenuItem(BaseModel):
     inferred_risks: list[AllergyTag] = Field(default_factory=list)
     unknowns: list[str] = Field(default_factory=list)
     verification_status: str = "inferred"
+    risk_label: Literal["avoid", "needs_check", "possible_lower_risk", "insufficient_info"] | None = None
+    matched_allergens: list[AllergyTag] = Field(default_factory=list)
+    risk_reasons: list[str] = Field(default_factory=list)
+    verification_question: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     source_page: int | None = Field(default=None, ge=1)
     source_url: str | None = None
     ocr_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -354,8 +360,10 @@ class NearbyPlaceSuggestion(BaseModel):
     confidence: float = Field(ge=0, le=1)
     menu_item_count: int = Field(default=0, ge=0)
     matched_allergen_items: int = Field(default=0, ge=0)
+    evidence_count: int = Field(default=0, ge=0)
     evidence: list[HybridSearchResult] = Field(default_factory=list)
     risk_note: str
+    reason: str = ""
 
 
 class NearbySuggestionResponse(BaseModel):

@@ -19,6 +19,7 @@ from .menu_ingestion import (
 )
 from .menu_indexing import finish_menu_index
 from .menu_job_queue import MenuRefreshMessage, enqueue_menu_refresh, service_bus_menu_queue_configured
+from .menu_risk import classify_place_menu
 from .squarespace_menu import MenuImageSet, discover_squarespace_menu_images
 from . import supabase_store
 from .models import (
@@ -175,8 +176,8 @@ async def get_place_details_service(
     )
 
 
-async def get_place_menu_service(place_id: str) -> PlaceMenu:
-    return load_place_menu(place_id)
+async def get_place_menu_service(place_id: str, allergens: list[AllergyTag] | None = None) -> PlaceMenu:
+    return classify_place_menu(load_place_menu(place_id), allergens or [])
 
 
 async def get_place_reviews_service(place_id: str) -> list[PlaceReviewSnippet]:
@@ -287,13 +288,17 @@ async def create_menu_refresh_job(
         )
         MENU_REFRESH_JOBS[job.id] = job
         if not supabase_store.save_menu_refresh_job(job):
+            storage_reason = supabase_store.last_error() or "Supabase rejected the menu refresh job."
             if refresh_mode == "auto" or not production_environment():
                 return _create_local_menu_refresh_job(
                     place_id=place_id,
                     restaurant_name=resolved_name,
                     website_url=resolved_url,
                     restaurant_address=place.get("address"),
-                    fallback_detail="Supabase job persistence failed; continued with local ingestion.",
+                    fallback_detail=(
+                        "Cloud job could not be saved, so this scan ran directly. "
+                        f"Reason: {storage_reason}"
+                    ),
                 )
             failed = job.model_copy(
                 update={
@@ -386,9 +391,9 @@ def _create_local_menu_refresh_job(
             IngestionTraceStep(
                 id="refresh_mode",
                 label="Select refresh mode",
-                status="fallback_local",
+                status="complete",
                 detail=fallback_detail,
-                provider="local_ingestion",
+                provider="direct_menu_scan",
             )
         )
     source = ingest_menu_from_website(

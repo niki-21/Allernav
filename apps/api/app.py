@@ -35,6 +35,7 @@ from allernav_api.models import (
     UserProfileResponse,
 )
 from allernav_api.rag_service import azure_openai_chat_configured, suggest_nearby_places_service
+from allernav_api import supabase_store
 from allernav_api.agent_service import (
     analyze_menu_service,
     analyze_restaurant_service,
@@ -143,6 +144,11 @@ def health() -> dict[str, object]:
     }
 
 
+@app.get("/api/debug/storage")
+def storage_debug() -> dict[str, object]:
+    return supabase_store.storage_diagnostics()
+
+
 @app.post("/api/search", response_model=SearchResponse)
 async def search_places_endpoint(
     payload: SearchRequest,
@@ -225,8 +231,11 @@ async def place_details_endpoint(
 
 
 @app.get("/api/places/{place_id}/menu", response_model=PlaceMenu)
-async def place_menu_endpoint(place_id: str) -> PlaceMenu:
-    return await get_place_menu_service(place_id)
+async def place_menu_endpoint(
+    place_id: str,
+    allergens: list[AllergyTag] = Query(default_factory=list),
+) -> PlaceMenu:
+    return await get_place_menu_service(place_id, allergens)
 
 
 @app.get("/api/places/{place_id}/reviews", response_model=list[PlaceReviewSnippet])

@@ -4,7 +4,9 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from threading import Lock
 from urllib import error, parse, request
+from uuid import uuid4
 
 from .models import MenuRefreshJob, MenuSource
 
@@ -13,6 +15,10 @@ from .models import MenuRefreshJob, MenuSource
 class SupabaseConfig:
     url: str
     service_role_key: str
+
+
+_LAST_ERROR: str | None = None
+_ERROR_LOCK = Lock()
 
 
 def get_supabase_config() -> SupabaseConfig | None:
@@ -25,6 +31,80 @@ def get_supabase_config() -> SupabaseConfig | None:
 
 def configured() -> bool:
     return get_supabase_config() is not None
+
+
+def last_error() -> str | None:
+    with _ERROR_LOCK:
+        return _LAST_ERROR
+
+
+def _set_last_error(message: str | None) -> None:
+    global _LAST_ERROR
+    with _ERROR_LOCK:
+        _LAST_ERROR = message
+
+
+def storage_diagnostics() -> dict[str, object]:
+    _set_last_error(None)
+    config = get_supabase_config()
+    if not config:
+        return {
+            "supabase_env_configured": False,
+            "supabase_menu_records_read_ok": False,
+            "supabase_menu_refresh_jobs_write_ok": False,
+            "last_supabase_error": "Supabase environment variables are not configured.",
+        }
+
+    read_result = _request(
+        config,
+        "/rest/v1/menu_records",
+        method="GET",
+        query={"select": "restaurant_id", "limit": "1"},
+    )
+    read_ok = read_result is not None
+    read_error = last_error()
+
+    now = datetime.now(UTC).isoformat()
+    probe_id = f"storage-diagnostic-{uuid4()}"
+    write_result = _request(
+        config,
+        "/rest/v1/menu_refresh_jobs",
+        method="POST",
+        body=[
+            {
+                "id": probe_id,
+                "restaurant_id": "storage-diagnostic",
+                "status": "complete",
+                "message": "Storage diagnostic probe.",
+                "processed_documents": 0,
+                "total_documents": 0,
+                "job_json": {},
+                "created_at": now,
+                "completed_at": now,
+                "updated_at": now,
+            }
+        ],
+        headers={"Prefer": "resolution=merge-duplicates", "Content-Type": "application/json"},
+        query={"on_conflict": "id"},
+    )
+    write_ok = write_result is not None
+    write_error = last_error()
+    if write_ok:
+        _request(
+            config,
+            "/rest/v1/menu_refresh_jobs",
+            method="DELETE",
+            query={"id": f"eq.{probe_id}"},
+        )
+
+    diagnostic_error = write_error or read_error
+    _set_last_error(diagnostic_error)
+    return {
+        "supabase_env_configured": True,
+        "supabase_menu_records_read_ok": read_ok,
+        "supabase_menu_refresh_jobs_write_ok": write_ok,
+        "last_supabase_error": diagnostic_error,
+    }
 
 
 def save_menu_source(
@@ -238,14 +318,49 @@ def _request(
     for key, value in (headers or {}).items():
         req.add_header(key, value)
 
+    _set_last_error(None)
     try:
         with request.urlopen(req, timeout=10) as response:
             raw = response.read().decode("utf-8", errors="ignore")
-    except (error.HTTPError, error.URLError, TimeoutError, ValueError):
+    except error.HTTPError as exc:
+        response_text = exc.read().decode("utf-8", errors="ignore") if exc.fp else ""
+        _set_last_error(_sanitized_http_error(exc, response_text, config))
+        return None
+    except error.URLError as exc:
+        _set_last_error(f"Supabase connection error: {_sanitize_text(str(exc.reason), config)}")
+        return None
+    except TimeoutError:
+        _set_last_error("Supabase request timed out.")
+        return None
+    except ValueError as exc:
+        _set_last_error(f"Supabase request configuration error: {_sanitize_text(str(exc), config)}")
         return None
     if not raw:
         return {}
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
+        _set_last_error("Supabase returned a response that was not valid JSON.")
         return None
+
+
+def _sanitized_http_error(exc: error.HTTPError, response_text: str, config: SupabaseConfig) -> str:
+    details: list[str] = []
+    try:
+        payload = json.loads(response_text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        for key in ("code", "message", "details", "hint"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                details.append(value.strip())
+    elif response_text.strip():
+        details.append(response_text.strip())
+    suffix = f": {'; '.join(details)}" if details else ""
+    return _sanitize_text(f"Supabase HTTP {exc.code} {exc.reason}{suffix}", config)
+
+
+def _sanitize_text(value: str, config: SupabaseConfig) -> str:
+    sanitized = value.replace(config.service_role_key, "[redacted]")
+    return " ".join(sanitized.split())[:500]

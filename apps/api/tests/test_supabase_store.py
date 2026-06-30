@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import unittest
+from urllib import error
 from unittest.mock import patch
 
 from allernav_api import supabase_store
@@ -56,6 +58,49 @@ class SupabaseStoreTests(unittest.TestCase):
         self.assertEqual(document_payload["extraction_method"], "azure_document_intelligence_read")
         self.assertEqual(document_payload["page_count"], 3)
         self.assertEqual(document_payload["extraction_confidence"], 0.88)
+
+    def test_request_captures_sanitized_http_error_details(self) -> None:
+        config = supabase_store.SupabaseConfig(
+            url="https://example.supabase.co",
+            service_role_key="secret-service-key",
+        )
+        http_error = error.HTTPError(
+            "https://example.supabase.co/rest/v1/menu_refresh_jobs",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(
+                b'{"code":"PGRST204","message":"Missing column job_json",'
+                b'"details":"secret-service-key is not accepted"}'
+            ),
+        )
+        with patch("allernav_api.supabase_store.request.urlopen", side_effect=http_error):
+            result = supabase_store._request(config, "/rest/v1/menu_refresh_jobs", method="POST", body=[])
+
+        self.assertIsNone(result)
+        self.assertIn("Supabase HTTP 400", supabase_store.last_error() or "")
+        self.assertIn("PGRST204", supabase_store.last_error() or "")
+        self.assertNotIn("secret-service-key", supabase_store.last_error() or "")
+
+    def test_storage_diagnostics_checks_read_and_write_without_exposing_config(self) -> None:
+        config = supabase_store.SupabaseConfig(
+            url="https://example.supabase.co",
+            service_role_key="secret-service-key",
+        )
+        with patch("allernav_api.supabase_store.get_supabase_config", return_value=config), patch(
+            "allernav_api.supabase_store._request", side_effect=[[], {}, {}]
+        ):
+            diagnostics = supabase_store.storage_diagnostics()
+
+        self.assertEqual(
+            diagnostics,
+            {
+                "supabase_env_configured": True,
+                "supabase_menu_records_read_ok": True,
+                "supabase_menu_refresh_jobs_write_ok": True,
+                "last_supabase_error": None,
+            },
+        )
 
 
 if __name__ == "__main__":

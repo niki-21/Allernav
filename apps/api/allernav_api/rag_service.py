@@ -45,28 +45,40 @@ async def suggest_nearby_places_service(
 ) -> NearbySuggestionResponse:
     candidates = payload.candidate_places[: payload.max_places]
     cached_candidates = [(place, load_menu_source(place.id)) for place in candidates]
+    cached_place_names = [place.name for place, source in cached_candidates if source is not None]
     cached_candidates.sort(key=lambda item: item[1] is not None, reverse=True)
-    selected_candidates = cached_candidates[: min(3, len(cached_candidates))]
     suggestions = list(
         await asyncio.gather(
             *(
                 asyncio.to_thread(build_place_suggestion, place, payload, source)
-                for place, source in selected_candidates
+                for place, source in cached_candidates
             )
         )
     )
     suggestions.sort(key=rank_suggestion, reverse=True)
     top_suggestions = suggestions[: min(3, len(suggestions))]
-    evidence = [item for suggestion in top_suggestions for item in suggestion.evidence]
-    missing_information = build_missing_information(top_suggestions)
+    evidence = [item for suggestion in suggestions for item in suggestion.evidence]
+    missing_information = build_missing_information(suggestions)
     questions = build_recommended_questions(payload.allergens)
     if not any(suggestion.menu_item_count > 0 for suggestion in top_suggestions):
         return NearbySuggestionResponse(
             answer="Open a restaurant and scan its menu first.",
             retrieval_mode="cached_menu_required",
-            places=top_suggestions,
+            places=suggestions,
             evidence=[],
             missing_information=["No stored menu evidence yet."],
+            recommended_questions=questions,
+        )
+    if len(cached_place_names) == 1:
+        return NearbySuggestionResponse(
+            answer=(
+                f"I only have stored menu evidence for {cached_place_names[0]} right now. "
+                "Scan more nearby restaurants to compare candidates."
+            ),
+            retrieval_mode="cached_menu_comparison",
+            places=suggestions,
+            evidence=evidence,
+            missing_information=missing_information,
             recommended_questions=questions,
         )
     answer = await generate_nearby_answer(payload, top_suggestions, evidence, missing_information, questions)
@@ -82,7 +94,7 @@ async def suggest_nearby_places_service(
     return NearbySuggestionResponse(
         answer=answer,
         retrieval_mode="hybrid_keyword_semantic",
-        places=top_suggestions,
+        places=suggestions,
         evidence=evidence,
         missing_information=missing_information,
         recommended_questions=questions,
@@ -131,13 +143,16 @@ def build_place_suggestion(
         allergens=[allergen.value for allergen in payload.allergens],
     )
     confidence = suggestion_confidence(menu_item_count, len(evidence), matched_allergen_items)
+    reason = build_candidate_reason(menu_item_count, matched_allergen_items, evidence)
     return NearbyPlaceSuggestion(
         place=place,
         confidence=confidence,
         menu_item_count=menu_item_count,
         matched_allergen_items=matched_allergen_items,
+        evidence_count=len(evidence),
         evidence=evidence,
-        risk_note=build_risk_note(menu_item_count, matched_allergen_items, evidence),
+        risk_note=reason,
+        reason=reason,
     )
 
 
@@ -148,7 +163,7 @@ def suggestion_confidence(menu_item_count: int, evidence_count: int, matched_all
     return round(max(0.18, min(0.82, confidence)), 2)
 
 
-def build_risk_note(
+def build_candidate_reason(
     menu_item_count: int,
     matched_allergen_items: int,
     evidence: list[HybridSearchResult],
@@ -157,11 +172,14 @@ def build_risk_note(
         return "No stored official menu evidence is available yet, so this place should not be ranked as lower risk."
     if matched_allergen_items:
         return (
-            f"Menu evidence includes {matched_allergen_items} item"
-            f"{'s' if matched_allergen_items != 1 else ''} with selected-allergen terms; treat this as a verification target."
+            f"{matched_allergen_items} menu item{'s' if matched_allergen_items != 1 else ''} "
+            "contain selected-allergen terms and need verification."
         )
     if evidence:
-        return "Stored menu evidence was retrieved, but ingredients and cross-contact handling still need staff verification."
+        return (
+            f"Retrieved {len(evidence)} cited menu fragment{'s' if len(evidence) != 1 else ''} "
+            f"from {menu_item_count} stored item{'s' if menu_item_count != 1 else ''}."
+        )
     return "Stored menu exists, but the current question did not retrieve enough source-backed evidence."
 
 
