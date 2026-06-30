@@ -243,6 +243,23 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Cloud job could not be saved", local_refresh.call_args.kwargs["fallback_detail"])
         self.assertIn("missing column job_json", local_refresh.call_args.kwargs["fallback_detail"])
 
+    def test_queue_only_background_scan_never_runs_local_ingestion(self) -> None:
+        with patch.dict("os.environ", {"MENU_REFRESH_MODE": "local"}, clear=True), patch(
+            "allernav_api.service._create_local_menu_refresh_job"
+        ) as local_refresh:
+            result = asyncio.run(
+                create_menu_refresh_job(
+                    "alpha",
+                    restaurant_name="Alpha",
+                    website_url="https://alpha.example",
+                    allow_local_fallback=False,
+                )
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("durable menu refresh queue", result.message.lower())
+        local_refresh.assert_not_called()
+
     def test_allowed_origins_include_localhost_defaults(self) -> None:
         origins = allowed_origins()
         self.assertIn("http://localhost:3000", origins)
@@ -494,11 +511,12 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(response.evidence), 1)
         self.assertEqual(
             response.answer,
-            "I only have stored menu evidence for Alpha Cafe right now. "
-            "Scan more nearby restaurants to compare candidates.",
+            "I found 1 nearby place and ranked Alpha Cafe using scanned menu evidence.",
         )
+        self.assertEqual(response.places[0].evidence_status, "scanned")
+        self.assertGreater(response.places[0].restaurant_fit_score, 20)
 
-    def test_nearby_rag_without_cached_menu_skips_retrieval_and_llm(self) -> None:
+    def test_nearby_rag_without_scanned_menu_returns_scan_needed_places(self) -> None:
         payload = NearbySuggestionRequest(
             question="Where should I start for peanut allergy?",
             allergens=[AllergyTag.PEANUT],
@@ -515,8 +533,10 @@ class ApiTests(unittest.TestCase):
         ) as hybrid_search, patch("allernav_api.rag_service.generate_nearby_answer") as explanation:
             response = asyncio.run(suggest_nearby_places_service(payload))
 
-        self.assertEqual(response.answer, "Open a restaurant and scan its menu first.")
-        self.assertEqual(response.missing_information, ["No stored menu evidence yet."])
+        self.assertEqual(response.answer, "I found 1 nearby place, but it needs a menu scan before comparison.")
+        self.assertEqual(response.missing_information, ["Some nearby places do not have scanned menu evidence yet."])
+        self.assertEqual(response.places[0].evidence_status, "scan_needed")
+        self.assertEqual(response.scan_needed_places[0].id, "alpha")
         hybrid_search.assert_not_called()
         explanation.assert_not_called()
 
@@ -578,10 +598,45 @@ class ApiTests(unittest.TestCase):
             response = asyncio.run(suggest_nearby_places_service(request_payload))
 
         self.assertEqual({place.place.id for place in response.places}, {"alpha", "bravo", "charlie"})
-        cached = [place for place in response.places if place.menu_item_count > 0]
-        self.assertEqual(len(cached), 2)
-        self.assertTrue(all(place.evidence_count == 1 for place in cached))
+        scanned = [place for place in response.places if place.evidence_status == "scanned"]
+        self.assertEqual(len(scanned), 2)
+        self.assertTrue(all(place.evidence_count == 1 for place in scanned))
+        self.assertEqual(response.scan_needed_places[0].id, "charlie")
         self.assertTrue(all(place.reason for place in response.places))
+
+    def test_nearby_rag_starts_at_most_two_background_scans(self) -> None:
+        candidates = [
+            PlaceListItem(
+                id=f"place-{index}",
+                name=f"Place {index}",
+                location=LatLng(lat=40 + index / 100, lng=-73),
+                website_url=f"https://place-{index}.example",
+            )
+            for index in range(3)
+        ]
+        payload = NearbySuggestionRequest(
+            candidate_places=candidates,
+            allergens=[AllergyTag.SESAME],
+            allow_background_scan=True,
+        )
+        jobs = [
+            MenuRefreshJob(
+                id=f"job-{index}",
+                place_id=f"place-{index}",
+                status="queued",
+                message="Queued",
+                created_at="2026-06-30T00:00:00Z",
+            )
+            for index in range(2)
+        ]
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
+            "allernav_api.service.create_menu_refresh_job", new=AsyncMock(side_effect=jobs)
+        ) as create_job:
+            response = asyncio.run(suggest_nearby_places_service(payload))
+
+        self.assertEqual(create_job.await_count, 2)
+        self.assertEqual(sum(item.evidence_status == "scan_running" for item in response.places), 2)
+        self.assertEqual(sum(item.evidence_status == "scan_needed" for item in response.places), 1)
 
 if __name__ == "__main__":
     unittest.main()

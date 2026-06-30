@@ -271,8 +271,6 @@ export default function TrustPanel({
     : "Showing the review snippets returned by the current place details source.";
   const confidencePercent = Math.round(data.score_summary.evidence_confidence * 100);
   const agentRecommendation = data.agent_recommendation ?? null;
-  const agentDishResults = agentRecommendation?.dish_results ?? [];
-  const hasAgentDishEvidence = agentDishResults.length > 0;
   const agentConfidencePercent = agentRecommendation ? Math.round(agentRecommendation.confidence * 100) : null;
   const openStatus = formatOpenStatus(data);
   const services = serviceLabels(data.service_options);
@@ -423,8 +421,6 @@ export default function TrustPanel({
                   ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
                   : refreshPending
                     ? "Menu scan is still running."
-                  : hasAgentDishEvidence
-                  ? `${agentDishResults.length} agent dish result${agentDishResults.length === 1 ? "" : "s"} found, but the structured menu view is still being normalized.`
                   : scanHasRun
                     ? "No stored menu evidence yet."
                     : "No menu scanned yet."}
@@ -496,19 +492,6 @@ export default function TrustPanel({
                 Scan menu
               </button>
             </article>
-          ) : hasAgentDishEvidence ? (
-            <article className="empty-menu-state">
-              <strong>Dish evidence found by agent analysis</strong>
-              <p>
-                The structured menu panel is not populated yet, but AllerNav found dish-level evidence through the
-                agentic evidence check. Treat these as verification targets, not confirmed lower-risk dishes.
-              </p>
-              {data.website_uri && (
-                <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
-                  Restaurant website
-                </a>
-              )}
-            </article>
           ) : (
             <article className="empty-menu-state">
               <strong>No stored menu evidence yet</strong>
@@ -572,23 +555,6 @@ export default function TrustPanel({
                 </button>
               )}
             </details>
-          )}
-
-          {agentRecommendation && hasAgentDishEvidence && (
-            <div className="menu-section-list compact-recommendations">
-              <strong>Agent dish evidence</strong>
-              {agentDishResults.slice(0, 3).map((item) => (
-                <article key={`${item.dish}-${item.risk_level}`} className="menu-list-item">
-                  <strong>{item.dish}</strong>
-                  <p>
-                    {formatRiskLabel(item.risk_level)} · {Math.round(item.confidence * 100)}% confidence
-                  </p>
-                  {item.detected_allergens.length > 0 && (
-                    <p>Flags: {item.detected_allergens.map((allergen) => allergen.replace("_", " ")).join(", ")}</p>
-                  )}
-                </article>
-              ))}
-            </div>
           )}
 
           <button type="button" className="ask-button" onClick={onAskRestaurant} disabled={isAskingRestaurant}>

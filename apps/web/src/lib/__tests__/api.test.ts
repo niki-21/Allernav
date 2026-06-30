@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -60,6 +61,7 @@ test("buildNearbySuggestionPayload includes current map candidates", () => {
       allergens: ["sesame"],
       candidate_place_ids: ["place-a", "place-b"],
       candidate_places: candidates,
+      allow_background_scan: false,
       max_places: 2,
       top_evidence: 3,
     },
@@ -85,10 +87,29 @@ test("buildNearbySuggestionPayload keeps visible candidates for cuisine prompts"
       allergens: ["sesame"],
       candidate_place_ids: ["place-a", "place-b"],
       candidate_places: candidates,
+      allow_background_scan: false,
       max_places: 2,
       top_evidence: 3,
     },
   );
+});
+
+test("nearby payload opts into controlled background scans", () => {
+  const candidates = [{ id: "place-a", name: "Alpha", location: { lat: 40, lng: -73 } }];
+  const payload = buildNearbySuggestionPayload(
+    "compare nearby places",
+    { lat: 40, lng: -73 },
+    ["sesame"],
+    candidates,
+    true,
+  );
+  assert.equal(payload.allow_background_scan, true);
+});
+
+test("TrustPanel does not duplicate agent dish evidence in the menu tab", () => {
+  const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes("Agent dish evidence"), false);
+  assert.equal(source.includes("Dish evidence found by agent analysis"), false);
 });
 
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {

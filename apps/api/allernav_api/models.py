@@ -87,6 +87,7 @@ class PlaceListItem(BaseModel):
     rating: float | None = None
     user_rating_count: int | None = None
     primary_type: str | None = None
+    website_url: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -353,17 +354,33 @@ class NearbySuggestionRequest(BaseModel):
     candidate_places: list[PlaceListItem] = Field(default_factory=list)
     max_places: int = Field(default=6, ge=1, le=10)
     top_evidence: int = Field(default=3, ge=1, le=5)
+    allow_background_scan: bool = False
 
 
 class NearbyPlaceSuggestion(BaseModel):
     place: PlaceListItem
     confidence: float = Field(ge=0, le=1)
+    evidence_status: Literal["scanned", "scan_needed", "scan_running", "scan_failed"] = "scan_needed"
+    scan_job_id: str | None = None
+    restaurant_fit_score: int = Field(default=20, ge=0, le=100)
+    restaurant_fit_label: Literal[
+        "Best current candidate",
+        "Needs verification",
+        "Scan needed",
+        "Higher concern",
+    ] = "Scan needed"
     menu_item_count: int = Field(default=0, ge=0)
     matched_allergen_items: int = Field(default=0, ge=0)
+    avoid_count: int = Field(default=0, ge=0)
+    needs_check_count: int = Field(default=0, ge=0)
+    possible_lower_risk_count: int = Field(default=0, ge=0)
+    insufficient_info_count: int = Field(default=0, ge=0)
+    evidence_quality: float = Field(default=0, ge=0, le=1)
     evidence_count: int = Field(default=0, ge=0)
     evidence: list[HybridSearchResult] = Field(default_factory=list)
     risk_note: str
     reason: str = ""
+    next_action: str = "Scan this menu before comparing allergy fit."
 
 
 class NearbySuggestionResponse(BaseModel):
@@ -373,6 +390,7 @@ class NearbySuggestionResponse(BaseModel):
     evidence: list[HybridSearchResult] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     recommended_questions: list[str] = Field(default_factory=list)
+    scan_needed_places: list[PlaceListItem] = Field(default_factory=list)
 
 
 class RecommendedMenuItem(BaseModel):

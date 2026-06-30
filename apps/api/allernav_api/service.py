@@ -213,6 +213,7 @@ async def create_menu_refresh_job(
     restaurant_name: str | None = None,
     website_url: str | None = None,
     client: GooglePlacesClient | None = None,
+    allow_local_fallback: bool = True,
 ) -> MenuRefreshJob:
     now = datetime.now(UTC).isoformat()
     resolved_name = restaurant_name
@@ -239,7 +240,7 @@ async def create_menu_refresh_job(
     refresh_mode = menu_refresh_mode()
     durable_configured = service_bus_menu_queue_configured() and supabase_store.configured()
     if refresh_mode != "local" and durable_configured:
-        image_set = _discover_squarespace_image_set(resolved_url)
+        image_set = _discover_squarespace_image_set(resolved_url) if allow_local_fallback else None
         document_urls = image_set.document_urls if image_set else []
         job = MenuRefreshJob(
             id=str(uuid4()),
@@ -289,7 +290,7 @@ async def create_menu_refresh_job(
         MENU_REFRESH_JOBS[job.id] = job
         if not supabase_store.save_menu_refresh_job(job):
             storage_reason = supabase_store.last_error() or "Supabase rejected the menu refresh job."
-            if refresh_mode == "auto" or not production_environment():
+            if allow_local_fallback and (refresh_mode == "auto" or not production_environment()):
                 return _create_local_menu_refresh_job(
                     place_id=place_id,
                     restaurant_name=resolved_name,
@@ -322,7 +323,7 @@ async def create_menu_refresh_job(
                 )
             )
         except RuntimeError as exc:
-            if refresh_mode == "auto" or not production_environment():
+            if allow_local_fallback and (refresh_mode == "auto" or not production_environment()):
                 failed = job.model_copy(
                     update={
                         "status": "failed",
@@ -357,6 +358,18 @@ async def create_menu_refresh_job(
             place_id=place_id,
             status="failed",
             message="Durable menu refresh requires configured Supabase and Azure Service Bus.",
+            created_at=now,
+            completed_at=now,
+        )
+        MENU_REFRESH_JOBS[job.id] = job
+        return job
+
+    if not allow_local_fallback:
+        job = MenuRefreshJob(
+            id=str(uuid4()),
+            place_id=place_id,
+            status="failed",
+            message="A durable menu refresh queue is required for background scanning.",
             created_at=now,
             completed_at=now,
         )

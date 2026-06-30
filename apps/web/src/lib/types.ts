@@ -40,6 +40,7 @@ export interface PlaceSummary {
   rating?: number | null;
   user_rating_count?: number | null;
   primary_type?: string | null;
+  website_url?: string | null;
 }
 
 export interface PlaceScoreSummary {
@@ -328,12 +329,22 @@ export interface HybridSearchResult {
 export interface NearbyPlaceSuggestion {
   place: PlaceSummary;
   confidence: number;
+  evidence_status: "scanned" | "scan_needed" | "scan_running" | "scan_failed";
+  scan_job_id?: string | null;
+  restaurant_fit_score: number;
+  restaurant_fit_label: "Best current candidate" | "Needs verification" | "Scan needed" | "Higher concern";
   menu_item_count: number;
   matched_allergen_items: number;
+  avoid_count: number;
+  needs_check_count: number;
+  possible_lower_risk_count: number;
+  insufficient_info_count: number;
+  evidence_quality: number;
   evidence_count: number;
   evidence: HybridSearchResult[];
   risk_note: string;
   reason: string;
+  next_action: string;
 }
 
 export interface NearbySuggestionResponse {
@@ -343,6 +354,7 @@ export interface NearbySuggestionResponse {
   evidence: HybridSearchResult[];
   missing_information: string[];
   recommended_questions: string[];
+  scan_needed_places: PlaceSummary[];
 }
 
 export type PlaceDetailState =

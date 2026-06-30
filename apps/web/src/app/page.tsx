@@ -39,6 +39,20 @@ import type {
 const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
 const DEFAULT_QUERY = "";
 
+function nearbyEvidenceStatus(status: string): string {
+  const labels: Record<string, string> = {
+    scanned: "Scanned evidence",
+    scan_needed: "Scan needed",
+    scan_running: "Scan running",
+    scan_failed: "Scan failed",
+  };
+  return labels[status] ?? "Needs verification";
+}
+
+function nearbyRetrievalLabel(mode: string): string {
+  return mode === "scanned_menu_evidence_needed" ? "Scanned menu evidence needed" : "Scanned menu comparison";
+}
+
 export default function Home() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [places, setPlaces] = useState<PlaceSummary[]>([]);
@@ -453,7 +467,7 @@ export default function Home() {
     }
   };
 
-  const askNearby = async () => {
+  const askNearby = async (allowBackgroundScan = false) => {
     const question = nearbyQuestion.trim();
     if (!question) {
       return;
@@ -461,11 +475,19 @@ export default function Home() {
     setNearbyAskState("loading");
     setNearbyAskError(null);
     try {
+      const candidatePlaces = rankedPlaces.slice(0, 8).map((place) => {
+        const detailState = detailStates[place.id];
+        return {
+          ...place,
+          website_url: detailState?.status === "ready" ? detailState.data.website_uri : null,
+        };
+      });
       const response = await askNearbyPlaces(
         question,
         mapCenter,
         selectedAllergens,
-        rankedPlaces.slice(0, 8),
+        candidatePlaces,
+        allowBackgroundScan,
       );
       setNearbyAnswer(response);
       const suggestedPlaces = response.places.map((suggestion) => suggestion.place);
@@ -563,7 +585,7 @@ export default function Home() {
               className="nearby-rag-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void askNearby();
+                void askNearby(false);
               }}
             >
               <textarea
@@ -582,7 +604,7 @@ export default function Home() {
                 <p>{nearbyAnswer.answer}</p>
                 {nearbyAnswer.places.length > 0 && (
                   <div className="nearby-rag-suggestions">
-                    {nearbyAnswer.places.map((suggestion) => (
+                    {nearbyAnswer.places.slice(0, 3).map((suggestion) => (
                       <button
                         type="button"
                         key={suggestion.place.id}
@@ -590,28 +612,41 @@ export default function Home() {
                         className="nearby-rag-chip"
                       >
                         <strong>{suggestion.place.name}</strong>
-                        <span>
-                          {suggestion.menu_item_count} menu items · {suggestion.evidence_count} cited fragments
+                        <span className="nearby-rag-card-meta">
+                          <b>{nearbyEvidenceStatus(suggestion.evidence_status)}</b>
+                          <b>{suggestion.restaurant_fit_score}/100</b>
+                          <b>{suggestion.restaurant_fit_label}</b>
                         </span>
                         <small>{suggestion.reason}</small>
+                        <small className="nearby-rag-next">Next: {suggestion.next_action}</small>
                       </button>
                     ))}
                   </div>
                 )}
-                <small>
-                  Retrieval: {nearbyAnswer.retrieval_mode.replaceAll("_", " ")} · {nearbyAnswer.evidence.length} cited
-                  fragments
-                </small>
+                {nearbyAnswer.scan_needed_places.length > 0 &&
+                  !nearbyAnswer.places.some((suggestion) => suggestion.evidence_status === "scan_running") && (
+                  <button
+                    type="button"
+                    className="scan-top-places-button"
+                    disabled={nearbyAskState === "loading"}
+                    onClick={() => void askNearby(true)}
+                  >
+                    {nearbyAskState === "loading" ? "Starting scans..." : "Scan top places"}
+                  </button>
+                )}
+                <small>{nearbyRetrievalLabel(nearbyAnswer.retrieval_mode)}</small>
                 {nearbyAnswer.evidence.length > 0 && (
-                  <div className="nearby-rag-citations">
-                    {nearbyAnswer.evidence.slice(0, 3).map((item, index) => (
-                      <article key={item.id} className="nearby-rag-citation">
-                        <strong>[E{index + 1}] {item.citation_label}</strong>
-                        <p>{item.citation_text}</p>
-                        <span>{item.retrieval_mode} · {Math.round(item.confidence * 100)}% confidence</span>
-                      </article>
-                    ))}
-                  </div>
+                  <details className="nearby-rag-details">
+                    <summary>Evidence details</summary>
+                    <div className="nearby-rag-citations">
+                      {nearbyAnswer.evidence.slice(0, 3).map((item, index) => (
+                        <article key={item.id} className="nearby-rag-citation">
+                          <strong>[E{index + 1}] {item.citation_label}</strong>
+                          <p>{item.citation_text}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
                 )}
               </div>
             )}

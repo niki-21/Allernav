@@ -963,10 +963,57 @@ textarea {
   font-size: 0.82rem;
 }
 
+.nearby-rag-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.nearby-rag-card-meta b {
+  padding: 2px 6px;
+  border: 1px solid rgba(60, 64, 67, 0.12);
+  border-radius: 6px;
+  background: #f5f7f8;
+  color: #4c5358;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
 .nearby-rag-chip small {
   color: #6f7378;
   font-size: 0.76rem;
   line-height: 1.35;
+}
+
+.nearby-rag-chip .nearby-rag-next {
+  color: #3f6459;
+}
+
+.scan-top-places-button {
+  min-height: 36px;
+  border: 1px solid #0f7b61;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f6c55;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.scan-top-places-button:disabled {
+  border-color: #c7ced3;
+  color: #7a838a;
+  cursor: not-allowed;
+}
+
+.nearby-rag-details summary {
+  color: #4d5b56;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.nearby-rag-details[open] summary {
+  margin-bottom: 7px;
 }
 
 .nearby-rag-citations {
