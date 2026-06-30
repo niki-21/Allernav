@@ -149,3 +149,41 @@ test("recommendMenuItems avoids promoting shared-prep items", async () => {
     ["Cold Brew"],
   );
 });
+
+test("recommendMenuItems only promotes backend-classified possible lower-risk items", async () => {
+  const recommendations = await recommendMenuItems(
+    "Test Cafe",
+    ["sesame"],
+    {
+      source_url: null,
+      sections: [
+        {
+          title: "Sides",
+          items: [
+            {
+              name: "Basmati Rice",
+              description: "Steamed long-grain basmati rice with herbs.",
+              price: null,
+              likely_safe_for: [],
+              likely_risky_for: [],
+              risk_label: "possible_lower_risk",
+              confidence: 0.84,
+            },
+            {
+              name: "House Curry",
+              description: "House curry sauce.",
+              price: null,
+              likely_safe_for: [],
+              likely_risky_for: [],
+              risk_label: "needs_check",
+              confidence: 0.62,
+            },
+          ],
+        },
+      ],
+    },
+    [],
+  );
+
+  assert.deepEqual(recommendations.map((item) => item.name), ["Basmati Rice"]);
+});

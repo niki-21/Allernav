@@ -4,9 +4,10 @@ import { fetchBackendPlaceMenu } from "../../../../../server/fastapi.ts";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, context: { params: Promise<{ placeId: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ placeId: string }> }) {
   const { placeId } = await context.params;
-  const menu = await fetchBackendPlaceMenu(placeId);
+  const allergens = new URL(request.url).searchParams.getAll("allergens");
+  const menu = await fetchBackendPlaceMenu(placeId, allergens);
   if (menu) {
     return NextResponse.json({
       place_id: placeId,

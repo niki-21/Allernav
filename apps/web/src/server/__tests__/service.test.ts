@@ -164,6 +164,11 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
           {
             name: "Normandie Crepe",
             description: "Apples and cream",
+            risk_label: "avoid",
+            matched_allergens: ["dairy"],
+            risk_reasons: ["Menu text identifies dairy."],
+            verification_question: "Can you confirm the dairy ingredients?",
+            confidence: 0.88,
             source_page: 1,
             source_url: "https://example.com/page-1.jpg",
             ocr_confidence: 0.91,
@@ -180,6 +185,9 @@ test("normalizeBackendMenu preserves OCR extraction metadata", () => {
   assert.equal(menu?.menu_version, "May 2026");
   assert.equal(menu?.document_urls?.length, 2);
   assert.equal(menu?.sections[0]?.items[0]?.source_page, 1);
+  assert.equal(menu?.sections[0]?.items[0]?.risk_label, "avoid");
+  assert.deepEqual(menu?.sections[0]?.items[0]?.matched_allergens, ["dairy"]);
+  assert.equal(menu?.sections[0]?.items[0]?.confidence, 0.88);
 });
 
 test("getPlaceDetailsService defers Apify reviews even when configured", async () => {

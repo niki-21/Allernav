@@ -49,6 +49,9 @@ function detectSharedPrepRisk(name: string, description?: string | null): boolea
 }
 
 function isEligibleRecommendation(item: MenuItem, allergens: AllergyTag[]): boolean {
+  if (item.risk_label) {
+    return item.risk_label === "possible_lower_risk";
+  }
   const riskyAllergens = Array.from(
     new Set([...inferRisk(allergens, item.name, item.description), ...explicitRisk(allergens, item)]),
   );
@@ -62,10 +65,10 @@ function isEligibleRecommendation(item: MenuItem, allergens: AllergyTag[]): bool
   }
 
   const crossContactPenalty = 0;
-  return safeItemScore(item.name, item.description) - crossContactPenalty >= 0;
+  return lowerRiskItemScore(item.name, item.description) - crossContactPenalty >= 0;
 }
 
-function safeItemScore(name: string, description?: string | null): number {
+function lowerRiskItemScore(name: string, description?: string | null): number {
   const haystack = itemText(name, description);
   let score = 0;
 
@@ -142,7 +145,7 @@ function heuristicRecommendationsWithEvidence(
           new Set([...inferRisk(allergens, item.name, item.description), ...explicitRisk(allergens, item)]),
         );
         const crossContactPenalty = detectSharedPrepRisk(item.name, item.description) ? 2 : 0;
-        const score = safeItemScore(item.name, item.description) - crossContactPenalty;
+        const score = lowerRiskItemScore(item.name, item.description) - crossContactPenalty;
         return {
           item,
           sectionTitle: section.title,

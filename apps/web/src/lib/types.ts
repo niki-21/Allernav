@@ -18,6 +18,7 @@ export type EvidenceTone = "reassuring" | "risk_note";
 export type AgentRiskLevel = "low" | "medium" | "high" | "insufficient_evidence";
 export type AgentRecommendedAction = "verify" | "avoid" | "ask_staff" | "insufficient_evidence";
 export type AgentSourceType = "official_menu" | "restaurant_website" | "review" | "fixture" | "user_upload" | "unknown";
+export type MenuRiskLabel = "avoid" | "needs_check" | "possible_lower_risk" | "insufficient_info";
 export type SignalType =
   | "accommodation"
   | "staff_knowledge"
@@ -112,6 +113,11 @@ export interface MenuItem {
   price?: string | null;
   likely_safe_for: AllergyTag[];
   likely_risky_for: AllergyTag[];
+  risk_label?: MenuRiskLabel | null;
+  matched_allergens?: AllergyTag[];
+  risk_reasons?: string[];
+  verification_question?: string | null;
+  confidence?: number | null;
   source_page?: number | null;
   source_url?: string | null;
   ocr_confidence?: number | null;
@@ -324,8 +330,10 @@ export interface NearbyPlaceSuggestion {
   confidence: number;
   menu_item_count: number;
   matched_allergen_items: number;
+  evidence_count: number;
   evidence: HybridSearchResult[];
   risk_note: string;
+  reason: string;
 }
 
 export interface NearbySuggestionResponse {

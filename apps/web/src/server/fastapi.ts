@@ -8,6 +8,11 @@ type BackendMenuItem = {
   inferred_risks?: unknown;
   likely_safe_for?: unknown;
   likely_risky_for?: unknown;
+  risk_label?: unknown;
+  matched_allergens?: unknown;
+  risk_reasons?: unknown;
+  verification_question?: unknown;
+  confidence?: unknown;
   source_page?: unknown;
   source_url?: unknown;
   ocr_confidence?: unknown;
@@ -99,6 +104,15 @@ function allergenArray(value: unknown): PlaceMenu["sections"][number]["items"][n
   return stringArray(value) as PlaceMenu["sections"][number]["items"][number]["likely_risky_for"];
 }
 
+function riskLabelValue(value: unknown): PlaceMenu["sections"][number]["items"][number]["risk_label"] {
+  return value === "avoid" ||
+    value === "needs_check" ||
+    value === "possible_lower_risk" ||
+    value === "insufficient_info"
+    ? value
+    : null;
+}
+
 export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -133,7 +147,13 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
                       ...allergenArray(typedItem.likely_risky_for),
                       ...allergenArray(typedItem.confirmed_allergens),
                       ...allergenArray(typedItem.inferred_risks),
+                      ...allergenArray(typedItem.matched_allergens),
                     ],
+                    risk_label: riskLabelValue(typedItem.risk_label),
+                    matched_allergens: allergenArray(typedItem.matched_allergens),
+                    risk_reasons: stringArray(typedItem.risk_reasons),
+                    verification_question: stringValue(typedItem.verification_question),
+                    confidence: numberValue(typedItem.confidence),
                     source_page: numberValue(typedItem.source_page),
                     source_url: stringValue(typedItem.source_url),
                     ocr_confidence: numberValue(typedItem.ocr_confidence),
@@ -165,11 +185,13 @@ export function normalizeBackendMenu(raw: unknown): PlaceMenu | null {
   };
 }
 
-export async function fetchBackendPlaceMenu(placeId: string): Promise<PlaceMenu | null> {
-  const url = buildFastApiUrl(`/api/places/${encodeURIComponent(placeId)}/menu`);
-  if (!url) {
+export async function fetchBackendPlaceMenu(placeId: string, allergens: string[] = []): Promise<PlaceMenu | null> {
+  const backendUrl = buildFastApiUrl(`/api/places/${encodeURIComponent(placeId)}/menu`);
+  if (!backendUrl) {
     return null;
   }
+  const url = new URL(backendUrl);
+  allergens.forEach((allergen) => url.searchParams.append("allergens", allergen));
 
   try {
     const response = await fetchWithTimeout(url, { cache: "no-store" }, timeoutMs("FASTAPI_READ_TIMEOUT_MS", 8000));

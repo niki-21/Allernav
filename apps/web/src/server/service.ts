@@ -266,7 +266,7 @@ export async function getPlaceDetailsService(
   const { summary, evidence, explanation } = analyzePlace(mergedPlace, selectedAllergens);
   const evidenceReviewIds = new Set(evidence.map((item) => item.review_id));
   const prioritizedReviews = prioritizeReviewSnippets(mergedPlace.reviews, selectedAllergens, evidenceReviewIds);
-  const storedMenu = await fetchBackendPlaceMenu(place.id);
+  const storedMenu = await fetchBackendPlaceMenu(place.id, selectedAllergens);
   const menu = storedMenu ?? localSnapshot?.menu ?? null;
   const recommendedItems = await recommendMenuItems(place.name, selectedAllergens, menu, evidence);
   const scoreSummary = applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length);

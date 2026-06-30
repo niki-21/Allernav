@@ -113,7 +113,7 @@ export default function Home() {
         }
         let refreshedMenu: PlaceMenu | null = null;
         for (let attempt = 0; attempt < 6; attempt += 1) {
-          refreshedMenu = await fetchPlaceMenu(details.id);
+          refreshedMenu = await fetchPlaceMenu(details.id, selectedAllergens);
           if (refreshedMenu || job.status !== "complete") {
             break;
           }
@@ -591,8 +591,9 @@ export default function Home() {
                       >
                         <strong>{suggestion.place.name}</strong>
                         <span>
-                          {Math.round(suggestion.confidence * 100)}% · {suggestion.menu_item_count} menu items
+                          {suggestion.menu_item_count} menu items · {suggestion.evidence_count} cited fragments
                         </span>
+                        <small>{suggestion.reason}</small>
                       </button>
                     ))}
                   </div>

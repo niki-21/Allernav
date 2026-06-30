@@ -121,8 +121,10 @@ export async function fetchPlaceDetails(placeId: string, allergens: AllergyTag[]
   return (await response.json()) as PlaceDetailsResponse;
 }
 
-export async function fetchPlaceMenu(placeId: string): Promise<PlaceMenu | null> {
-  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu`, {
+export async function fetchPlaceMenu(placeId: string, allergens: AllergyTag[]): Promise<PlaceMenu | null> {
+  const params = new URLSearchParams();
+  allergens.forEach((allergen) => params.append("allergens", allergen));
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu?${params.toString()}`, {
     cache: "no-store",
   });
   if (!response.ok) {

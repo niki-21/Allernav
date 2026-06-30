@@ -25,10 +25,10 @@ interface TrustPanelProps {
 }
 
 type PlaceTab = "overview" | "menu" | "reviews" | "about";
-type VerificationTone = "needs-check" | "possible" | "avoid" | "unknown";
+type VerificationTone = "needs-check" | "possible" | "possible-weak" | "avoid" | "unknown";
 
 interface MenuVerification {
-  label: "Needs check" | "Possible" | "Avoid" | "Unknown";
+  label: "Needs check" | "Possible lower-risk" | "Avoid" | "Insufficient info";
   tone: VerificationTone;
   metadata: string;
   detail: string;
@@ -95,43 +95,73 @@ function getMenuVerification(
   selectedAllergens: AllergyTag[],
   fallbackConfidence?: number | null,
 ): MenuVerification {
-  const detectedAllergens = item.likely_risky_for.filter((allergen) => selectedAllergens.includes(allergen));
-  const confidence = item.ocr_confidence ?? fallbackConfidence;
+  const detectedAllergens = Array.from(
+    new Set(
+      [...(item.matched_allergens ?? []), ...item.likely_risky_for].filter((allergen) =>
+        selectedAllergens.includes(allergen),
+      ),
+    ),
+  );
+  const confidence = item.confidence ?? item.ocr_confidence ?? fallbackConfidence;
+  const confidenceText = typeof confidence === "number" ? `${Math.round(confidence * 100)}% evidence confidence` : null;
+  const detail = [item.risk_reasons?.join(" "), item.verification_question].filter(Boolean).join(" ");
 
-  if (detectedAllergens.length > 0) {
+  if (item.risk_label === "avoid" || detectedAllergens.length > 0) {
     const allergenList = detectedAllergens.map(formatAllergen).join(", ");
     return {
       label: "Avoid",
       tone: "avoid",
-      metadata: `✕ likely avoid · ⚠ ${allergenList} detected`,
-      detail: `Selected allergen evidence was detected: ${allergenList}. Verify the source and do not rely on this item as a lower-risk option.`,
+      metadata: [allergenList ? `${allergenList} detected` : "selected allergen detected", confidenceText]
+        .filter(Boolean)
+        .join(" · "),
+      detail: detail || `Selected allergen evidence was detected: ${allergenList}.`,
     };
   }
 
-  if (!item.description?.trim()) {
-    return {
-      label: "Unknown",
-      tone: "unknown",
-      metadata: "ⓘ ingredients unavailable · verify prep",
-      detail: "The menu source provides a dish name but no usable ingredient description or cross-contact information.",
-    };
-  }
-
-  if (typeof confidence === "number" && confidence < 0.65) {
+  if (item.risk_label === "needs_check") {
     return {
       label: "Needs check",
       tone: "needs-check",
-      metadata: "⚠ source needs review · ⓘ verify ingredients",
-      detail: `The extracted source confidence is ${Math.round(confidence * 100)}%. Confirm ingredients and preparation with staff.`,
+      metadata: ["preparation needs staff review", confidenceText].filter(Boolean).join(" · "),
+      detail: detail || "Preparation or ingredient wording needs staff verification.",
+    };
+  }
+
+  if (item.risk_label === "insufficient_info" || !item.description?.trim()) {
+    return {
+      label: "Insufficient info",
+      tone: "unknown",
+      metadata: ["ingredient details missing", confidenceText].filter(Boolean).join(" · "),
+      detail: detail || "The menu source does not provide enough ingredient or preparation detail.",
+    };
+  }
+
+  if (typeof confidence === "number" && confidence < 0.62) {
+    return {
+      label: "Needs check",
+      tone: "needs-check",
+      metadata: ["source evidence is weak", confidenceText].filter(Boolean).join(" · "),
+      detail: detail || "The source evidence needs staff verification.",
     };
   }
 
   return {
-    label: "Possible",
-    tone: "possible",
-    metadata: "✓? no selected allergen detected · verify prep",
-    detail: "No selected allergen was detected in the available menu text. Ingredients and cross-contact still require verification.",
+    label: "Possible lower-risk",
+    tone: typeof confidence === "number" && confidence < 0.72 ? "possible-weak" : "possible",
+    metadata: ["no selected allergen detected", confidenceText, "verify prep"].filter(Boolean).join(" · "),
+    detail: detail || "No selected allergen was detected in the available menu text. Verify preparation with staff.",
   };
+}
+
+function traceStatusLabel(status: string): string {
+  return status === "fallback_local" ? "complete" : status.replaceAll("_", " ");
+}
+
+function traceDetail(step: MenuRefreshJob["trace"][number]): string {
+  if (step.status === "fallback_local" || step.detail.toLowerCase().includes("continued with local ingestion")) {
+    return "Cloud job could not be saved, so this scan ran directly.";
+  }
+  return step.detail;
 }
 
 export default function TrustPanel({
@@ -191,6 +221,38 @@ export default function TrustPanel({
   const activeTab = tabState.placeId === data.id ? tabState.tab : "overview";
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
+  const classifiedMenuItems = menuSections.flatMap((section) =>
+    section.items.map((item) => ({
+      item,
+      sectionTitle: section.title,
+      verification: getMenuVerification(item, data.selected_allergens, data.menu?.extraction_confidence),
+    })),
+  );
+  const menuRiskGroups = [
+    {
+      key: "avoid",
+      title: "Avoid for your allergies",
+      tone: "avoid",
+      items: classifiedMenuItems.filter((entry) => entry.verification.label === "Avoid").slice(0, 6),
+    },
+    {
+      key: "check",
+      title: "Needs staff check",
+      tone: "needs-check",
+      items: classifiedMenuItems
+        .filter((entry) => entry.verification.label === "Needs check" || entry.verification.label === "Insufficient info")
+        .slice(0, 6),
+    },
+    {
+      key: "possible",
+      title: "Possible lower-risk items to ask about",
+      tone: "possible",
+      items: classifiedMenuItems
+        .filter((entry) => entry.verification.label === "Possible lower-risk")
+        .sort((left, right) => (right.item.confidence ?? 0) - (left.item.confidence ?? 0))
+        .slice(0, 5),
+    },
+  ];
   const reviewSnippets = data.review_snippets ?? [];
   const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
@@ -381,29 +443,6 @@ export default function TrustPanel({
               </a>
             )}
           </div>
-          {data.recommended_items.length > 0 && (
-            <div className="verify-list">
-              <strong>Possible lower-risk items to ask about.</strong>
-              {data.recommended_items.slice(0, 5).map((item) => (
-                <article
-                  key={`${item.section_title ?? "pick"}-${item.name}`}
-                  className="verify-item-row"
-                  title={`${item.reason}${item.caution ? ` ${item.caution}` : ""}`}
-                >
-                  <div>
-                    <div className="menu-item-heading">
-                      <strong>{item.name}</strong>
-                      <span className="menu-status-chip possible" title="Possible lower-risk based on available evidence; verify with staff.">
-                        Possible
-                      </span>
-                    </div>
-                    <p className="menu-item-meta possible">✓? possible lower-risk · verify ingredients and prep</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-
           {refreshPending && menuSections.length === 0 ? (
             <div className="menu-loading-state">
               <strong>Menu scan is still running</strong>
@@ -413,21 +452,18 @@ export default function TrustPanel({
               <div className="skeleton skeleton-review" />
             </div>
           ) : menuSections.length > 0 ? (
-            <div className="menu-section-list google-menu-list">
-              {menuSections.slice(0, 3).map((section) => (
-                <section key={section.title} className="menu-list-section">
-                  <h3>{section.title}</h3>
-                  {section.items.slice(0, 6).map((item) => {
-                    const verification = getMenuVerification(
-                      item,
-                      data.selected_allergens,
-                      data.menu?.extraction_confidence,
-                    );
+            <div className="menu-risk-groups">
+              {menuRiskGroups.filter((group) => group.items.length > 0).map((group) => (
+                <section key={group.key} className={`menu-risk-group ${group.tone}`}>
+                  <div className="menu-risk-group-header">
+                    <h3>{group.title}</h3>
+                    <span>{group.items.length}</span>
+                  </div>
+                  {group.items.map(({ item, sectionTitle, verification }) => {
                     const tooltip = [item.description, verification.detail].filter(Boolean).join(" ");
-
                     return (
                       <article
-                        key={`${section.title}-${item.name}`}
+                        key={`${sectionTitle}-${item.name}`}
                         className="menu-list-item compact-menu-row"
                         title={tooltip}
                       >
@@ -441,7 +477,9 @@ export default function TrustPanel({
                               {verification.label}
                             </span>
                           </div>
-                          <p className={`menu-item-meta ${verification.tone}`}>{verification.metadata}</p>
+                          <p className={`menu-item-meta ${verification.tone}`}>
+                            {sectionTitle} · {verification.metadata}
+                          </p>
                         </div>
                         {item.price && <span className="menu-price">{item.price}</span>}
                       </article>
@@ -511,9 +549,9 @@ export default function TrustPanel({
                   <article key={step.id} className={`menu-trace-step ${step.status}`}>
                     <div>
                       <strong>{step.label}</strong>
-                      <span>{step.status}</span>
+                      <span>{traceStatusLabel(step.status)}</span>
                     </div>
-                    <p>{step.detail}</p>
+                    <p>{traceDetail(step)}</p>
                     <small>
                       {[step.provider?.replaceAll("_", " "), typeof step.duration_ms === "number" ? `${step.duration_ms} ms` : null]
                         .filter(Boolean)
