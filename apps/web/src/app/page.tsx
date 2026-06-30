@@ -41,10 +41,10 @@ const DEFAULT_QUERY = "";
 
 function nearbyEvidenceStatus(status: string): string {
   const labels: Record<string, string> = {
-    scanned: "Scanned evidence",
-    scan_needed: "Scan needed",
-    scan_running: "Scan running",
-    scan_failed: "Scan failed",
+    scanned: "Scanned menu",
+    scan_needed: "Menu scan needed",
+    scan_running: "Scanning menu…",
+    scan_failed: "Scan failed — retry",
   };
   return labels[status] ?? "Needs verification";
 }
@@ -64,6 +64,30 @@ function nearbyBucketSummary(suggestion: NearbySuggestionResponse["places"][numb
     `${suggestion.needs_check_count} needs check`,
     `${suggestion.possible_lower_risk_count} possible lower-risk`,
   ].join(" · ");
+}
+
+function hasScannedMenuEvidence(suggestion: NearbySuggestionResponse["places"][number]): boolean {
+  return (
+    suggestion.evidence_status === "scanned" &&
+    suggestion.menu_item_count > 0 &&
+    suggestion.restaurant_fit_score != null
+  );
+}
+
+function nearbyAnswerSummary(answer: NearbySuggestionResponse): string {
+  const runningCount = answer.places.filter((suggestion) => suggestion.evidence_status === "scan_running").length;
+  if (runningCount > 0) {
+    return `Scanning menus for ${runningCount} restaurant${runningCount === 1 ? "" : "s"}…`;
+  }
+  const scannedCount = answer.places.filter(hasScannedMenuEvidence).length;
+  if (scannedCount === 0) {
+    const candidateCount = Math.max(answer.places.length, scannedCount + answer.scan_needed_places.length);
+    return `I found ${candidateCount} nearby restaurant${candidateCount === 1 ? "" : "s"}. I can compare allergy fit after menu scans.`;
+  }
+  const remainingCount = answer.places.filter((suggestion) => suggestion.evidence_status === "scan_needed").length;
+  return remainingCount > 0
+    ? `I can compare ${scannedCount} restaurant${scannedCount === 1 ? "" : "s"} from scanned menu evidence. ${remainingCount} more need menu scans.`
+    : `I compared ${scannedCount} nearby restaurant${scannedCount === 1 ? "" : "s"} using scanned menu evidence.`;
 }
 
 function menuIsStale(menu: PlaceMenu | null | undefined): boolean {
@@ -101,7 +125,16 @@ export default function Home() {
   const requestSequence = useRef(0);
   const menuRefreshAttempts = useRef<Set<string>>(new Set());
   const agentAnalysisAttempts = useRef<Set<string>>(new Set());
+  const nearbyRequestSequence = useRef(0);
+  const nearbyContextRef = useRef<string | null>(null);
   const [profileReady, setProfileReady] = useState(false);
+
+  const resetNearbyRag = useCallback(() => {
+    nearbyRequestSequence.current += 1;
+    setNearbyAnswer(null);
+    setNearbyAskError(null);
+    setNearbyAskState("idle");
+  }, []);
 
   const runMenuRefresh = useCallback(
     async (details: Extract<PlaceDetailState, { status: "ready" }>["data"], forceRefresh = false) => {
@@ -134,7 +167,7 @@ export default function Home() {
           forceRefresh,
         });
         setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
-        if (job.item_count > 0) {
+        if ((job.item_count ?? 0) > 0) {
           const fastMenu = await fetchPlaceMenu(details.id, selectedAllergens);
           if (fastMenu) {
             setDetailStates((current) => {
@@ -287,6 +320,17 @@ export default function Home() {
   );
 
   const selectedAllergenKey = useMemo(() => selectedAllergens.join("|"), [selectedAllergens]);
+  const nearbyContextKey = useMemo(
+    () =>
+      JSON.stringify({
+        query: query.trim().toLowerCase(),
+        center: [mapCenter.lat.toFixed(5), mapCenter.lng.toFixed(5)],
+        places: places.map((place) => [place.id, place.location.lat, place.location.lng]),
+        selectedPlaceId,
+        allergens: selectedAllergens,
+      }),
+    [mapCenter.lat, mapCenter.lng, places, query, selectedAllergens, selectedPlaceId],
+  );
   const canSearchArea = useMemo(() => shouldShowSearchAreaButton(searchCenter, mapCenter), [mapCenter, searchCenter]);
   const selectedAllergenSummary = useMemo(
     () =>
@@ -296,6 +340,13 @@ export default function Home() {
         .join(", "),
     [selectedAllergens],
   );
+
+  useEffect(() => {
+    if (nearbyContextRef.current !== null && nearbyContextRef.current !== nearbyContextKey) {
+      resetNearbyRag();
+    }
+    nearbyContextRef.current = nearbyContextKey;
+  }, [nearbyContextKey, resetNearbyRag]);
 
   const hydratePlaces = useCallback(async (nextPlaces: PlaceSummary[], allergens: AllergyTag[], sequence: number) => {
     await Promise.allSettled(
@@ -348,6 +399,7 @@ export default function Home() {
       } = {},
     ) => {
       const sequence = ++requestSequence.current;
+      resetNearbyRag();
       setIsSearching(true);
       setSearchError(null);
 
@@ -385,7 +437,7 @@ export default function Home() {
         }
       }
     },
-    [hydratePlaces],
+    [hydratePlaces, resetNearbyRag],
   );
 
   useEffect(() => {
@@ -463,6 +515,7 @@ export default function Home() {
   }, [detailStates, runMenuRefresh, selectedAllergens, selectedAllergenKey, selectedPlaceId]);
 
   const toggleAllergen = (allergen: AllergyTag) => {
+    resetNearbyRag();
     setSelectedAllergens((current) => {
       if (current.includes(allergen)) {
         return current.length === 1 ? current : current.filter((value) => value !== allergen);
@@ -472,11 +525,13 @@ export default function Home() {
   };
 
   const selectPlace = (placeId: string | null) => {
+    resetNearbyRag();
     setSelectedPlaceId(placeId);
     setMapFocusPlaceId(placeId);
   };
 
   const selectNativePlace = (place: PlaceSummary) => {
+    resetNearbyRag();
     setPlaces((current) => [place, ...current.filter((item) => item.id !== place.id)]);
     setSelectedPlaceId(place.id);
     setMapFocusPlaceId(place.id);
@@ -529,19 +584,36 @@ export default function Home() {
     if (!question) {
       return;
     }
+    if (!areaSearchCompleted || canSearchArea || rankedPlaces.length === 0) {
+      resetNearbyRag();
+      setNearbyAskState("error");
+      setNearbyAskError("Search this area first.");
+      return;
+    }
+    const requestId = ++nearbyRequestSequence.current;
+    const requestContext = nearbyContextKey;
     setNearbyAskState("loading");
     setNearbyAskError(null);
+    if (allowBackgroundScan) {
+      setNearbyAnswer((current) => {
+        if (!current) {
+          return current;
+        }
+        let scansMarked = 0;
+        return {
+          ...current,
+          places: current.places.map((suggestion) => {
+            if (suggestion.evidence_status !== "scan_needed" || scansMarked >= 3) {
+              return suggestion;
+            }
+            scansMarked += 1;
+            return { ...suggestion, evidence_status: "scan_running" as const };
+          }),
+        };
+      });
+    }
     try {
-      let visiblePlaces = rankedPlaces;
-      if (!areaSearchCompleted || canSearchArea || visiblePlaces.length === 0) {
-        visiblePlaces = await runSearch(query.trim() || "restaurants", mapCenter, selectedAllergens);
-      }
-      if (visiblePlaces.length === 0) {
-        setNearbyAskState("error");
-        setNearbyAskError("Search this area first so AllerNav has restaurants to compare.");
-        return;
-      }
-      const candidatePlaces = visiblePlaces.slice(0, 8).map((place) => {
+      const candidatePlaces = rankedPlaces.slice(0, 8).map((place) => {
         const detailState = detailStates[place.id];
         return {
           ...place,
@@ -556,6 +628,9 @@ export default function Home() {
         candidatePlaces,
         allowBackgroundScan,
       );
+      if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+        return;
+      }
       setNearbyAnswer(response);
       const runningScans = response.places.filter(
         (suggestion) => suggestion.evidence_status === "scan_running" && suggestion.scan_job_id,
@@ -563,8 +638,12 @@ export default function Home() {
       if (allowBackgroundScan && runningScans.length > 0) {
         void (async () => {
           const terminalStatuses = new Set(["complete", "failed", "needs_background_refresh"]);
+          const loadedMenuIds = new Set<string>();
           for (let attempt = 0; attempt < 90; attempt += 1) {
             await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+            if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+              return;
+            }
             const jobs = (
               await Promise.all(
                 runningScans.map(async (suggestion) => {
@@ -576,21 +655,36 @@ export default function Home() {
                 }),
               )
             ).filter((job): job is MenuRefreshJob => job !== null);
+            if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+              return;
+            }
             setMenuRefreshJobs((current) => ({
               ...current,
               ...Object.fromEntries(jobs.map((job) => [job.place_id, job])),
             }));
 
-            const completedJobs = jobs.filter((job) => job.status === "complete");
-            if (completedJobs.length > 0) {
+            const menuReadyJobs = jobs.filter(
+              (job) => (job.item_count ?? 0) > 0 && !loadedMenuIds.has(job.place_id),
+            );
+            if (menuReadyJobs.length > 0) {
+              menuReadyJobs.forEach((job) => loadedMenuIds.add(job.place_id));
               const refreshedDetails = await Promise.allSettled(
-                completedJobs.map((job) => fetchPlaceDetails(job.place_id, selectedAllergens)),
+                menuReadyJobs.map(async (job) => {
+                  const [details, menu] = await Promise.all([
+                    fetchPlaceDetails(job.place_id, selectedAllergens),
+                    fetchPlaceMenu(job.place_id, selectedAllergens),
+                  ]);
+                  return { job, details: { ...details, menu: menu ?? details.menu } };
+                }),
               );
+              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+                return;
+              }
               setDetailStates((current) => {
                 let next = current;
-                refreshedDetails.forEach((result, index) => {
+                refreshedDetails.forEach((result) => {
                   if (result.status === "fulfilled") {
-                    next = applyPlaceDetailSuccess(next, completedJobs[index].place_id, result.value);
+                    next = applyPlaceDetailSuccess(next, result.value.job.place_id, result.value.details);
                   }
                 });
                 return next;
@@ -602,8 +696,28 @@ export default function Home() {
                 candidatePlaces,
                 false,
               );
-              setNearbyAnswer(reranked);
-              break;
+              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+                return;
+              }
+              const stillRunning = new globalThis.Map(
+                jobs
+                  .filter((job) => !terminalStatuses.has(job.status) && (job.item_count ?? 0) === 0)
+                  .map((job) => [job.place_id, job]),
+              );
+              setNearbyAnswer({
+                ...reranked,
+                places: reranked.places.map((suggestion) => {
+                  const activeJob = stillRunning.get(suggestion.place.id);
+                  return activeJob
+                    ? {
+                        ...suggestion,
+                        evidence_status: "scan_running" as const,
+                        scan_job_id: activeJob.id,
+                        restaurant_fit_score: null,
+                      }
+                    : suggestion;
+                }),
+              });
             }
             if (jobs.length === runningScans.length && jobs.every((job) => terminalStatuses.has(job.status))) {
               const reranked = await askNearbyPlaces(
@@ -613,40 +727,40 @@ export default function Home() {
                 candidatePlaces,
                 false,
               );
+              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+                return;
+              }
               setNearbyAnswer(reranked);
               break;
             }
           }
         })();
       }
-      const suggestedPlaces = response.places.map((suggestion) => suggestion.place);
-      if (suggestedPlaces.length > 0) {
-        const firstSuggestion = suggestedPlaces[0];
-        const existingIds = new Set(places.map((place) => place.id));
-        const newPlaces = suggestedPlaces.filter((place) => !existingIds.has(place.id));
-        if (newPlaces.length > 0) {
-          startTransition(() => {
-            setPlaces((current) => [...newPlaces, ...current]);
-            setDetailStates((current) => ({
-              ...current,
-              ...Object.fromEntries(newPlaces.map((place) => [place.id, { status: "loading" as const }])),
-            }));
-          });
-          const sequence = ++requestSequence.current;
-          void hydratePlaces(newPlaces, selectedAllergens, sequence);
-        }
-        setSelectedPlaceId((current) => current ?? firstSuggestion.id);
-        setMapFocusPlaceId(firstSuggestion.id);
-        setSearchTargetPlaceId(firstSuggestion.id);
-        setSearchCenter(firstSuggestion.location);
-        setMapCenter(firstSuggestion.location);
-      }
     } catch (error) {
+      if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+        return;
+      }
+      if (allowBackgroundScan) {
+        setNearbyAnswer((current) =>
+          current
+            ? {
+                ...current,
+                places: current.places.map((suggestion) =>
+                  suggestion.evidence_status === "scan_running"
+                    ? { ...suggestion, evidence_status: "scan_failed" as const }
+                    : suggestion,
+                ),
+              }
+            : current,
+        );
+      }
       setNearbyAskState("error");
       setNearbyAskError(nearbyRagErrorMessage(error));
       return;
     }
-    setNearbyAskState("idle");
+    if (requestId === nearbyRequestSequence.current && requestContext === nearbyContextRef.current) {
+      setNearbyAskState("idle");
+    }
   };
 
   return (
@@ -661,14 +775,20 @@ export default function Home() {
           searchTargetPlaceId={searchTargetPlaceId}
           onPlaceSelect={selectPlace}
           onNativePlaceSelect={selectNativePlace}
-          onMapCenterChange={setMapCenter}
+          onMapCenterChange={(center) => {
+            resetNearbyRag();
+            setMapCenter(center);
+          }}
         />
       </div>
 
       <div className="search-slot">
         <SearchBar
           query={query}
-          onQueryChange={setQuery}
+          onQueryChange={(nextQuery) => {
+            resetNearbyRag();
+            setQuery(nextQuery);
+          }}
           onSearch={(nextQuery) => {
             setQuery(nextQuery);
             void runSearch(nextQuery, mapCenter, selectedAllergens, { focusTopResult: true });
@@ -734,35 +854,39 @@ export default function Home() {
             {nearbyAskError && <p className="panel-error">{nearbyAskError}</p>}
             {nearbyAnswer && (
               <div className="nearby-rag-answer">
-                <p>{nearbyAnswer.answer}</p>
-                {nearbyAnswer.places.some((suggestion) => suggestion.evidence_status === "scan_running") && (
-                  <p className="nearby-scan-running">Scanning menus...</p>
-                )}
+                <p>{nearbyAnswerSummary(nearbyAnswer)}</p>
                 {nearbyAnswer.places.length > 0 && (
                   <div className="nearby-rag-suggestions">
-                    {nearbyAnswer.places.slice(0, 3).map((suggestion) => (
-                      <button
-                        type="button"
-                        key={suggestion.place.id}
-                        onClick={() => selectPlace(suggestion.place.id)}
-                        className="nearby-rag-chip"
-                      >
-                        <strong>{suggestion.place.name}</strong>
-                        <span className="nearby-rag-card-meta">
-                          <b>{nearbyEvidenceStatus(suggestion.evidence_status)}</b>
-                          {suggestion.restaurant_fit_score != null ? (
-                            <>
-                              <b>{suggestion.restaurant_fit_score}/100</b>
-                              <b>{suggestion.restaurant_fit_label}</b>
-                            </>
-                          ) : (
-                            suggestion.scan_priority_rank && <b>Scan priority #{suggestion.scan_priority_rank}</b>
-                          )}
-                        </span>
-                        {suggestion.restaurant_fit_score != null && <small>{nearbyBucketSummary(suggestion)}</small>}
-                        <small className="nearby-rag-next">Next: {suggestion.next_action}</small>
-                      </button>
-                    ))}
+                    {nearbyAnswer.places.slice(0, 3).map((suggestion) => {
+                      const showScore = hasScannedMenuEvidence(suggestion);
+                      const scoreTone = showScore
+                        ? suggestion.restaurant_fit_score! >= 70
+                          ? "good"
+                          : suggestion.restaurant_fit_score! >= 45
+                            ? "caution"
+                            : "risk"
+                        : "";
+                      return (
+                        <button
+                          type="button"
+                          key={suggestion.place.id}
+                          onClick={() => selectPlace(suggestion.place.id)}
+                          className="nearby-rag-chip"
+                        >
+                          <span className="nearby-rag-card-title">
+                            <strong>{suggestion.place.name}</strong>
+                            {showScore && (
+                              <b className={`nearby-score-badge ${scoreTone}`}>{suggestion.restaurant_fit_score}</b>
+                            )}
+                          </span>
+                          <span className="nearby-rag-card-meta">
+                            <b>{showScore ? suggestion.restaurant_fit_label : nearbyEvidenceStatus(suggestion.evidence_status)}</b>
+                          </span>
+                          {showScore && <small>{nearbyBucketSummary(suggestion)}</small>}
+                          {showScore && <small className="nearby-rag-next">Next: {suggestion.next_action}</small>}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
                 {nearbyAnswer.scan_needed_places.length > 0 &&
@@ -776,10 +900,10 @@ export default function Home() {
                     {nearbyAskState === "loading" ? "Starting scans..." : "Scan top places"}
                   </button>
                 )}
-                <small>{nearbyRetrievalLabel(nearbyAnswer.retrieval_mode)}</small>
-                {nearbyAnswer.evidence.length > 0 && (
-                  <details className="nearby-rag-details">
-                    <summary>Evidence details</summary>
+                <details className="nearby-rag-details">
+                  <summary>Technical trace</summary>
+                  <small>{nearbyRetrievalLabel(nearbyAnswer.retrieval_mode)}</small>
+                  {nearbyAnswer.evidence.length > 0 && (
                     <div className="nearby-rag-citations">
                       {nearbyAnswer.evidence.slice(0, 3).map((item, index) => (
                         <article key={item.id} className="nearby-rag-citation">
@@ -788,8 +912,8 @@ export default function Home() {
                         </article>
                       ))}
                     </div>
-                  </details>
-                )}
+                  )}
+                </details>
               </div>
             )}
           </section>

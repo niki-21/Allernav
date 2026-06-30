@@ -129,17 +129,31 @@ test("menu rows hide repeated confidence and RAG cards show one restaurant score
   const trustPanelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
   const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
   assert.equal(trustPanelSource.includes("confidenceText"), false);
-  assert.equal((pageSource.match(/<b>{suggestion\.restaurant_fit_score}\/100<\/b>/g) ?? []).length, 1);
-  assert.equal(pageSource.includes("suggestion.restaurant_fit_score != null"), true);
+  assert.equal(pageSource.includes("suggestion.restaurant_fit_score}/100"), false);
+  assert.equal(pageSource.includes("hasScannedMenuEvidence(suggestion)"), true);
   assert.equal(pageSource.includes("nearbyBucketSummary(suggestion)"), true);
 });
 
 test("Agentic RAG hides unscanned allergy scores and polls started scans", () => {
   const source = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
-  assert.equal(source.includes("Scan priority #{suggestion.scan_priority_rank}"), true);
-  assert.equal(source.includes("Scanning menus..."), true);
+  assert.equal(source.includes("Scan priority #"), false);
+  assert.equal(source.includes('scan_running: "Scanning menu…"'), true);
   assert.equal(source.includes("fetchMenuRefreshJob(suggestion.scan_job_id as string)"), true);
+  assert.equal(source.includes("fetchPlaceMenu(job.place_id, selectedAllergens)"), true);
   assert.equal(source.includes("setNearbyAnswer(reranked)"), true);
+});
+
+test("Agentic RAG resets when the active search context changes", () => {
+  const source = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes("const nearbyContextKey = useMemo"), true);
+  assert.equal(source.includes("nearbyContextRef.current !== nearbyContextKey"), true);
+  assert.equal(source.includes("setNearbyAnswer(null)"), true);
+  assert.equal(source.includes('setNearbyAskError("Search this area first.")'), true);
+});
+
+test("place cards leave the restaurant score to the details header", () => {
+  const source = readFileSync(new URL("../../components/PlaceCard.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes("restaurant_fit_score"), false);
 });
 
 test("Menu tab leads with the fit score and possible lower-risk section", () => {
@@ -161,7 +175,8 @@ test("TrustPanel keeps Overview and Menu restaurant fit messaging consistent", (
   assert.ok(source.includes("restaurantFitScore >= 70"));
   assert.ok(source.includes("restaurantFitScore >= 45"));
   assert.ok(source.includes("agentRecommendation && !hasRestaurantFit"));
-  assert.ok(source.includes("Restaurant allergy fit: {restaurantFitScore}/100 · {restaurantFitLabel}"));
+  assert.ok(source.includes("Restaurant allergy fit: {restaurantFitScore} · {restaurantFitLabel}"));
+  assert.ok(source.includes("{restaurantFitScore}</span>"));
   assert.ok(source.includes("Some dishes contain your allergens, but many menu items may be possible lower-risk after staff verification."));
 });
 
@@ -170,6 +185,12 @@ test("TrustPanel exposes the fast and deep menu scan lifecycle", () => {
   assert.ok(source.includes('"Menu found · deeper scan running"'));
   assert.ok(source.includes('"Menu found · RAG index ready"'));
   assert.ok(source.includes("Refresh menu"));
+});
+
+test("Agentic RAG technical trace stays collapsed", () => {
+  const source = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("<summary>Technical trace</summary>"));
+  assert.equal(source.includes('<details className="nearby-rag-details" open>'), false);
 });
 
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {

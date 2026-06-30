@@ -996,6 +996,51 @@ textarea {
   font-size: 0.82rem;
 }
 
+.nearby-rag-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nearby-rag-card-title strong {
+  min-width: 0;
+  color: #202124;
+  overflow-wrap: anywhere;
+}
+
+.nearby-score-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid;
+  border-radius: 7px;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.nearby-score-badge.good {
+  border-color: #79bda4;
+  background: #dff2e9;
+  color: #0f6045;
+}
+
+.nearby-score-badge.caution {
+  border-color: #ddb46d;
+  background: #fff3d8;
+  color: #81500b;
+}
+
+.nearby-score-badge.risk {
+  border-color: #df9e98;
+  background: #fbe4e2;
+  color: #9d211d;
+}
+
 .nearby-rag-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1671,11 +1716,16 @@ body {
 
 .restaurant-fit-badge {
   flex: 0 0 auto;
-  padding: 3px 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-left: auto;
   border: 1px solid;
-  border-radius: 6px;
-  font-size: 0.76rem;
-  font-weight: 800;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 850;
 }
 
 .restaurant-fit-badge.good {

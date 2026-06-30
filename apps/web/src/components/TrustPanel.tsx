@@ -354,7 +354,7 @@ export default function TrustPanel({
         <p className="panel-eyebrow">Place details</p>
         <div className="place-title-with-fit">
           <h2>{data.name}</h2>
-          {hasRestaurantFit && <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}/100</span>}
+          {hasRestaurantFit && <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}</span>}
         </div>
         {hasRestaurantFit && <p className="restaurant-fit-label">{restaurantFitLabel}</p>}
         <p>{data.address ?? "Address unavailable"}</p>
@@ -452,14 +452,16 @@ export default function TrustPanel({
             {ocrStatus && <span className={ocrStatus.className}>{ocrStatus.label}</span>}
             {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
           </div>
-          <div className="menu-fit-summary" aria-label="Restaurant allergy fit summary">
-            <strong>
-              Restaurant allergy fit: {restaurantFitScore}/100 · {restaurantFitLabel}
-            </strong>
-            <p>
-              {menuBucketCounts.possible} possible lower-risk · {menuBucketCounts.check} needs check · {menuBucketCounts.avoid} avoid · {menuBucketCounts.insufficient} insufficient info
-            </p>
-          </div>
+          {hasRestaurantFit && (
+            <div className="menu-fit-summary" aria-label="Restaurant allergy fit summary">
+              <strong>
+                Restaurant allergy fit: {restaurantFitScore} · {restaurantFitLabel}
+              </strong>
+              <p>
+                {menuBucketCounts.possible} possible lower-risk · {menuBucketCounts.check} needs check · {menuBucketCounts.avoid} avoid · {menuBucketCounts.insufficient} insufficient info
+              </p>
+            </div>
+          )}
           <div className="menu-source-row">
             <div>
               <strong>Menu</strong>
