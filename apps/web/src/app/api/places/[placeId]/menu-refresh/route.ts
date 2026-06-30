@@ -24,16 +24,21 @@ export async function POST(request: Request, context: { params: Promise<{ placeI
   const payload = (await request.json().catch(() => ({}))) as {
     restaurant_name?: string | null;
     website_url?: string | null;
+    force_refresh?: boolean;
   };
   const url = new URL(backendUrl);
   const restaurantName = payload.restaurant_name ?? incomingUrl.searchParams.get("restaurant_name");
   const websiteUrl = payload.website_url ?? incomingUrl.searchParams.get("website_url");
+  const forceRefresh = payload.force_refresh ?? incomingUrl.searchParams.get("force_refresh") === "true";
 
   if (restaurantName) {
     url.searchParams.set("restaurant_name", restaurantName);
   }
   if (websiteUrl) {
     url.searchParams.set("website_url", websiteUrl);
+  }
+  if (forceRefresh) {
+    url.searchParams.set("force_refresh", "true");
   }
 
   try {

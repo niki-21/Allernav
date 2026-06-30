@@ -262,6 +262,14 @@ export default function TrustPanel({
   const restaurantFitScore = data.restaurant_fit_score ?? data.menu?.restaurant_fit_score ?? 20;
   const restaurantFitLabel =
     data.restaurant_fit_label ?? data.menu?.restaurant_fit_label ?? (menuItemCount > 0 ? "Needs verification" : "Scan needed");
+  const hasRestaurantFit = menuItemCount > 0 && restaurantFitScore != null;
+  const restaurantFitTone = restaurantFitScore >= 70 ? "good" : restaurantFitScore >= 45 ? "caution" : "risk";
+  const restaurantFitMessage =
+    menuBucketCounts.avoid > 0 && menuBucketCounts.possible > 0
+      ? "Some dishes contain your allergens, but many menu items may be possible lower-risk after staff verification."
+      : menuBucketCounts.possible > 0
+        ? "Several menu items may be possible lower-risk after staff verification."
+        : "The current menu evidence still needs careful staff verification.";
   const reviewSnippets = data.review_snippets ?? [];
   const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
@@ -311,9 +319,19 @@ export default function TrustPanel({
   const refreshFailed = menuRefreshJob?.status === "failed";
   const refreshPending =
     isMenuLoading ||
-    ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "needs_background_refresh"].includes(
+    ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "deep_scanning", "needs_background_refresh"].includes(
       menuRefreshJob?.status ?? "",
     );
+  const menuLifecycleLabel =
+    menuItemCount > 0 && indexingStatus === "complete"
+      ? "Menu found · RAG index ready"
+      : menuItemCount > 0 && refreshPending
+        ? "Menu found · deeper scan running"
+        : menuItemCount > 0
+          ? "Menu found"
+          : refreshPending
+            ? "Menu scan running"
+            : "No menu evidence";
   const ocrTrace = menuRefreshJob?.trace.find((step) => step.id === "document_ocr");
   const ocrStatus =
     data.menu?.extraction_method?.includes("azure_document_intelligence") || ocrTrace?.status === "complete"
@@ -334,7 +352,11 @@ export default function TrustPanel({
     <div className="trust-panel-content">
       <div className="place-sheet-header">
         <p className="panel-eyebrow">Place details</p>
-        <h2>{data.name}</h2>
+        <div className="place-title-with-fit">
+          <h2>{data.name}</h2>
+          {hasRestaurantFit && <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}/100</span>}
+        </div>
+        {hasRestaurantFit && <p className="restaurant-fit-label">{restaurantFitLabel}</p>}
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
       </div>
@@ -378,11 +400,19 @@ export default function TrustPanel({
               ))}
             </div>
           )}
-          <div className="overview-line">
-            <strong>Allergy read</strong>
-            <p>{data.decision_brief.summary}</p>
-          </div>
-          {agentRecommendation && (
+          {!hasRestaurantFit && (
+            <div className="overview-line">
+              <strong>Allergy read</strong>
+              <p>{data.decision_brief.summary}</p>
+            </div>
+          )}
+          {hasRestaurantFit && (
+            <div className={`overview-line restaurant-fit-overview ${restaurantFitTone}`}>
+              <strong>{restaurantFitLabel}</strong>
+              <p>{restaurantFitMessage}</p>
+            </div>
+          )}
+          {agentRecommendation && !hasRestaurantFit && (
             <div className={`overview-line agent-risk ${agentRecommendation.overall_risk}`}>
               <strong>
                 Agentic risk: {formatRiskLabel(agentRecommendation.overall_risk)} ·{" "}
@@ -415,10 +445,10 @@ export default function TrustPanel({
             aria-label="Menu and retrieval status"
           >
             <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
-              {menuItemCount > 0 ? "Menu found" : refreshPending ? "Menu scan running" : "No menu evidence"}
+              {menuLifecycleLabel}
             </span>
             <span className="needs-verification">{restaurantFitLabel}</span>
-            {ragStatus && <span className={ragStatus.className}>{ragStatus.label}</span>}
+            {ragStatus && !menuLifecycleLabel.includes("RAG index ready") && <span className={ragStatus.className}>{ragStatus.label}</span>}
             {ocrStatus && <span className={ocrStatus.className}>{ocrStatus.label}</span>}
             {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
           </div>
@@ -450,11 +480,18 @@ export default function TrustPanel({
                 <p className="muted-line">Latest saved menu shown while the refresh continues.</p>
               )}
             </div>
-            {(data.menu?.source_url || data.menu?.document_url) && (
-              <a className="source-link" href={data.menu.source_url ?? data.menu.document_url ?? ""} target="_blank" rel="noreferrer">
-                Source
-              </a>
-            )}
+            <div className="menu-source-actions">
+              {(data.menu?.source_url || data.menu?.document_url) && (
+                <a className="source-link" href={data.menu.source_url ?? data.menu.document_url ?? ""} target="_blank" rel="noreferrer">
+                  Source
+                </a>
+              )}
+              {menuItemCount > 0 && (
+                <button type="button" className="retry-button" onClick={onRefreshMenu} disabled={refreshPending}>
+                  Refresh menu
+                </button>
+              )}
+            </div>
           </div>
           {refreshPending && menuSections.length === 0 ? (
             <div className="menu-loading-state">

@@ -1657,6 +1657,63 @@ body {
   line-height: 1.15;
 }
 
+.place-title-with-fit {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.place-title-with-fit h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.restaurant-fit-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.restaurant-fit-badge.good {
+  border-color: #8fcbb5;
+  background: #e7f5ef;
+  color: #126148;
+}
+
+.restaurant-fit-badge.caution {
+  border-color: #e2bd80;
+  background: #fff7e7;
+  color: #8a4b08;
+}
+
+.restaurant-fit-badge.risk {
+  border-color: #e8aaa5;
+  background: #fce8e6;
+  color: #a5221f;
+}
+
+.place-sheet-header .restaurant-fit-label {
+  color: #3c4043;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.restaurant-fit-overview.good {
+  border-left-color: #18855f;
+}
+
+.restaurant-fit-overview.caution {
+  border-left-color: #b06000;
+}
+
+.restaurant-fit-overview.risk {
+  border-left-color: #b3261e;
+}
+
 .place-sheet-header p {
   margin: 0;
 }
@@ -1961,6 +2018,17 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
+}
+
+.menu-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-source-actions .retry-button {
+  margin: 0;
+  white-space: nowrap;
 }
 
 .source-link,

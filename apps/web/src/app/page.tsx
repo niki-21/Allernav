@@ -66,6 +66,14 @@ function nearbyBucketSummary(suggestion: NearbySuggestionResponse["places"][numb
   ].join(" · ");
 }
 
+function menuIsStale(menu: PlaceMenu | null | undefined): boolean {
+  if (!menu || !menu.source_fetched_at) {
+    return true;
+  }
+  const fetchedAt = Date.parse(menu.source_fetched_at);
+  return Number.isNaN(fetchedAt) || Date.now() - fetchedAt > 7 * 24 * 60 * 60 * 1000;
+}
+
 export default function Home() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [places, setPlaces] = useState<PlaceSummary[]>([]);
@@ -96,7 +104,7 @@ export default function Home() {
   const [profileReady, setProfileReady] = useState(false);
 
   const runMenuRefresh = useCallback(
-    async (details: Extract<PlaceDetailState, { status: "ready" }>["data"]) => {
+    async (details: Extract<PlaceDetailState, { status: "ready" }>["data"], forceRefresh = false) => {
       const startedAt = new Date().toISOString();
       setMenuLoadingPlaceIds((current) => new Set(current).add(details.id));
       setMenuRefreshJobs((current) => ({
@@ -123,8 +131,24 @@ export default function Home() {
         let job = await refreshPlaceMenu(details.id, {
           placeName: details.name,
           websiteUrl: details.website_uri,
+          forceRefresh,
         });
         setMenuRefreshJobs((current) => ({ ...current, [details.id]: job }));
+        if (job.item_count > 0) {
+          const fastMenu = await fetchPlaceMenu(details.id, selectedAllergens);
+          if (fastMenu) {
+            setDetailStates((current) => {
+              const currentState = current[details.id];
+              if (!currentState || currentState.status !== "ready") {
+                return current;
+              }
+              return {
+                ...current,
+                [details.id]: { status: "ready", data: { ...currentState.data, menu: fastMenu } },
+              };
+            });
+          }
+        }
         const terminalStatuses = new Set(["complete", "failed", "needs_background_refresh"]);
         for (let attempt = 0; attempt < 90 && !terminalStatuses.has(job.status); attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 2_000));
@@ -396,9 +420,9 @@ export default function Home() {
     const menuItemCount =
       details.menu?.sections.reduce((count, section) => count + section.items.length, 0) ?? 0;
 
-    if (!details.menu && details.website_uri && !menuRefreshAttempts.current.has(details.id)) {
+    if ((!details.menu || menuIsStale(details.menu)) && details.website_uri && !menuRefreshAttempts.current.has(details.id)) {
       menuRefreshAttempts.current.add(details.id);
-      void runMenuRefresh(details);
+      void runMenuRefresh(details, false);
       return;
     }
 
@@ -811,7 +835,7 @@ export default function Home() {
                 return;
               }
               menuRefreshAttempts.current.add(selectedPlaceId);
-              void runMenuRefresh(detailState.data);
+              void runMenuRefresh(detailState.data, true);
             }}
             onAskRestaurant={askAboutSelectedPlace}
             onRetry={() => {

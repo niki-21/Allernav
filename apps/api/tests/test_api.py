@@ -414,17 +414,73 @@ class ApiTests(unittest.TestCase):
             os.environ.pop("ALLERNAV_MENU_DB", None)
 
         self.assertEqual(refresh.status_code, 202)
-        self.assertEqual(refresh.json()["status"], "complete")
+        self.assertEqual(refresh.json()["status"], "deep_scanning")
         self.assertEqual(refresh.json()["indexing_status"], "pending")
         self.assertEqual(refresh.json()["trace"][0]["id"], "source_discovery")
-        self.assertEqual(refresh.json()["trace"][-1]["id"], "search_index")
-        self.assertEqual(refresh.json()["trace"][-1]["status"], "pending")
+        trace_by_id = {step["id"]: step for step in refresh.json()["trace"]}
+        self.assertEqual(trace_by_id["menu_extracted"]["status"], "complete")
+        self.assertEqual(trace_by_id["search_index"]["status"], "pending")
+        self.assertEqual(trace_by_id["deep_scan"]["status"], "running")
         submit_index.assert_called_once()
         inline_index.assert_not_called()
         self.assertEqual(menu.status_code, 200)
         self.assertEqual(menu.json()["sections"][0]["items"][0]["name"], "Tomato Rice Bowl")
         self.assertGreater(menu.json()["restaurant_fit_score"], 20)
         self.assertEqual(menu.json()["possible_lower_risk_count"], 1)
+
+    def test_menu_refresh_reuses_recent_menu_until_force_refresh(self) -> None:
+        cached = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url="https://example.com/menu",
+            source_timestamp="2099-01-01T00:00:00+00:00",
+            reliability=0.9,
+            sections=[MenuSection(title="Bowls", items=[MenuItem(name="Rice Bowl")])],
+        )
+
+        with patch("allernav_api.service.load_menu_source", return_value=cached), patch(
+            "allernav_api.service.ingest_menu_from_website"
+        ) as ingest:
+            job = asyncio.run(
+                create_menu_refresh_job(
+                    "alpha",
+                    restaurant_name="Alpha",
+                    website_url="https://example.com/menu",
+                )
+            )
+
+        self.assertEqual(job.status, "complete")
+        self.assertEqual(job.message, "Using recently scanned menu evidence.")
+        self.assertEqual(job.trace[0].id, "cache_check")
+        ingest.assert_not_called()
+
+    def test_force_refresh_bypasses_recent_menu_cache(self) -> None:
+        cached = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url="https://example.com/menu",
+            source_timestamp="2099-01-01T00:00:00+00:00",
+            reliability=0.9,
+            sections=[MenuSection(title="Bowls", items=[MenuItem(name="Rice Bowl")])],
+        )
+        refreshed = cached.model_copy(update={"source_timestamp": "2099-01-02T00:00:00+00:00"})
+
+        with patch.dict(os.environ, {"MENU_REFRESH_MODE": "local"}), patch(
+            "allernav_api.service.load_menu_source", return_value=cached
+        ), patch(
+            "allernav_api.service.ingest_menu_from_website", return_value=refreshed
+        ) as ingest, patch(
+            "allernav_api.service.MENU_INDEX_EXECUTOR.submit"
+        ):
+            job = asyncio.run(
+                create_menu_refresh_job(
+                    "alpha",
+                    restaurant_name="Alpha",
+                    website_url="https://example.com/menu",
+                    force_refresh=True,
+                )
+            )
+
+        self.assertEqual(job.status, "deep_scanning")
+        self.assertTrue(ingest.call_args.kwargs["fast_only"])
 
     def test_menu_refresh_queues_squarespace_image_job_when_azure_is_configured(self) -> None:
         menu_html = "".join(

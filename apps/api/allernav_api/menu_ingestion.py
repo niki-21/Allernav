@@ -401,6 +401,8 @@ def ingest_menu_from_website(
     extract_document: ExtractDocument | None = None,
     db_path: Path | None = None,
     trace: list[IngestionTraceStep] | None = None,
+    fast_only: bool = False,
+    deep_scan: bool = False,
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_extractor = extract_document or extract_document_from_url
@@ -429,8 +431,13 @@ def ingest_menu_from_website(
     )
     parse_started_at = time.monotonic()
     static_deadline = min(deadline, parse_started_at + 12.0)
+    static_parse_urls = static_candidate_urls[:6]
+    if fast_only:
+        static_parse_urls = [url for url in static_parse_urls if not looks_like_document_url(url)]
+    elif deep_scan:
+        static_parse_urls = sorted(static_parse_urls, key=lambda url: not looks_like_document_url(url))
     last_source: MenuSource | None = ingest_first_matching_source(
-        candidate_urls=static_candidate_urls[:6],
+        candidate_urls=static_parse_urls,
         fetcher=fetcher,
         document_extractor=document_extractor,
         restaurant_id=restaurant_id,
@@ -457,7 +464,17 @@ def ingest_menu_from_website(
         item_count=static_item_count,
         started_at=parse_started_at,
     )
-    if document_candidates:
+    if fast_only and document_candidates:
+        append_trace_step(
+            trace,
+            step_id="document_ocr",
+            label="Read menu document",
+            status="deferred",
+            detail="PDF or image OCR was deferred to the deeper background scan.",
+            provider="azure_document_intelligence",
+            source_url=document_candidates[0],
+        )
+    elif document_candidates:
         ocr_configured = AzureDocumentIntelligenceClient().configured or extract_document is not None
         used_ocr = bool(last_source and last_source.extraction_method == "azure_document_intelligence")
         append_trace_step(
@@ -487,7 +504,17 @@ def ingest_menu_from_website(
             detail="No PDF or image menu candidate was discovered on the restaurant website.",
             provider="azure_document_intelligence",
         )
-    if last_source and last_source.sections:
+    best_source = last_source if last_source and last_source.sections else None
+    if fast_only:
+        return last_source or MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url=website_url,
+            source_timestamp=datetime.now(UTC).isoformat(),
+            reliability=0.25,
+            sections=[],
+            extraction_method="fast_html_scan",
+        )
+    if last_source and last_source.sections and not deep_scan:
         return last_source
 
     search_started_at = time.monotonic()
@@ -552,7 +579,9 @@ def ingest_menu_from_website(
             source=source,
             db_path=db_path,
         )
-        return source
+        if not deep_scan:
+            return source
+        best_source = better_menu_source(best_source, source)
     if web_source:
         last_source = web_source
 
@@ -624,7 +653,9 @@ def ingest_menu_from_website(
         started_at=rendered_started_at,
     )
     if rendered_source.sections:
-        return rendered_source
+        if not deep_scan:
+            return rendered_source
+        best_source = better_menu_source(best_source, rendered_source)
     if rendered_source.source_url:
         last_source = rendered_source
 
@@ -643,9 +674,20 @@ def ingest_menu_from_website(
     if rendered_link_source and rendered_link_source.extraction_method == "azure_document_intelligence":
         _record_document_ocr(trace, rendered_link_source)
     if rendered_link_source and rendered_link_source.sections:
-        return rendered_link_source
+        if not deep_scan:
+            return rendered_link_source
+        best_source = better_menu_source(best_source, rendered_link_source)
     if rendered_link_source:
         last_source = rendered_link_source
+
+    if best_source and best_source.sections:
+        save_menu_source(
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant_name,
+            source=best_source,
+            db_path=db_path,
+        )
+        return best_source
 
     failed_source = last_source or MenuSource(
         source_type=SourceType.RESTAURANT_WEBSITE,
@@ -675,6 +717,16 @@ def menu_source_item_count(source: MenuSource | None) -> int:
     if not source:
         return 0
     return sum(len(section.items) for section in source.sections)
+
+
+def better_menu_source(current: MenuSource | None, candidate: MenuSource | None) -> MenuSource | None:
+    if not candidate or not candidate.sections:
+        return current
+    if not current or not current.sections:
+        return candidate
+    current_rank = (menu_source_item_count(current), current.reliability)
+    candidate_rank = (menu_source_item_count(candidate), candidate.reliability)
+    return candidate if candidate_rank > current_rank else current
 
 
 def append_trace_step(

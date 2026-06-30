@@ -63,10 +63,15 @@ export function buildSearchPayload(query: string, center: LatLng, allergens: All
   };
 }
 
-export function buildMenuRefreshPayload(context: { placeName?: string | null; websiteUrl?: string | null }) {
+export function buildMenuRefreshPayload(context: {
+  placeName?: string | null;
+  websiteUrl?: string | null;
+  forceRefresh?: boolean;
+}) {
   return {
     restaurant_name: context.placeName ?? null,
     website_url: context.websiteUrl ?? null,
+    force_refresh: context.forceRefresh ?? false,
   };
 }
 
@@ -138,7 +143,7 @@ export async function fetchPlaceMenu(placeId: string, allergens: AllergyTag[]): 
 
 export async function refreshPlaceMenu(
   placeId: string,
-  context: { placeName?: string | null; websiteUrl?: string | null } = {},
+  context: { placeName?: string | null; websiteUrl?: string | null; forceRefresh?: boolean } = {},
 ): Promise<MenuRefreshJob> {
   const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/menu-refresh`, {
     method: "POST",

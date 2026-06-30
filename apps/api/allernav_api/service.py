@@ -32,6 +32,7 @@ from .models import (
     AskRestaurantResponse,
     LatLng,
     MenuRefreshJob,
+    MenuSource,
     PlaceDetailsResponse,
     PlaceMenu,
     PlaceReviewSnippet,
@@ -234,6 +235,7 @@ async def create_menu_refresh_job(
     website_url: str | None = None,
     client: GooglePlacesClient | None = None,
     allow_local_fallback: bool = True,
+    force_refresh: bool = False,
 ) -> MenuRefreshJob:
     now = datetime.now(UTC).isoformat()
     resolved_name = restaurant_name
@@ -257,37 +259,91 @@ async def create_menu_refresh_job(
         MENU_REFRESH_JOBS[job.id] = job
         return job
 
+    cached_source = load_menu_source(place_id)
+    if cached_source and not force_refresh and not menu_source_is_stale(cached_source):
+        item_count = sum(len(section.items) for section in cached_source.sections)
+        job = MenuRefreshJob(
+            id=str(uuid4()),
+            place_id=place_id,
+            status="complete",
+            message="Using recently scanned menu evidence.",
+            item_count=item_count,
+            source_url=cached_source.source_url,
+            content_type=cached_source.content_type,
+            extraction_method=cached_source.extraction_method,
+            page_count=cached_source.page_count,
+            extraction_confidence=cached_source.extraction_confidence,
+            indexing_status="complete",
+            trace=[
+                IngestionTraceStep(
+                    id="cache_check",
+                    label="Check stored menu",
+                    status="complete",
+                    detail="A recent successful menu scan was reused.",
+                    provider="supabase_menu_cache",
+                    item_count=item_count,
+                )
+            ],
+            created_at=now,
+            completed_at=now,
+        )
+        MENU_REFRESH_JOBS[job.id] = job
+        return job
+
+    fast_trace: list[IngestionTraceStep] = []
+    fast_source = None
+    if allow_local_fallback:
+        fast_source = ingest_menu_from_website(
+            restaurant_id=place_id,
+            restaurant_name=resolved_name,
+            website_url=resolved_url,
+            restaurant_address=place.get("address"),
+            trace=fast_trace,
+            fast_only=True,
+        )
+    fast_item_count = sum(len(section.items) for section in fast_source.sections) if fast_source else 0
+
     refresh_mode = menu_refresh_mode()
     durable_configured = service_bus_menu_queue_configured() and supabase_store.configured()
     if refresh_mode != "local" and durable_configured:
-        image_set = _discover_squarespace_image_set(resolved_url) if allow_local_fallback else None
+        image_set = _discover_squarespace_image_set(resolved_url) if allow_local_fallback and not fast_item_count else None
         document_urls = image_set.document_urls if image_set else []
         job = MenuRefreshJob(
             id=str(uuid4()),
             place_id=place_id,
-            status="queued",
+            status="deep_scanning" if fast_item_count else "queued",
             message=(
-                f"Queued OCR for {len(document_urls)} official menu images."
+                "Menu found; deeper scan is running."
+                if fast_item_count
+                else f"Queued OCR for {len(document_urls)} official menu images."
                 if document_urls
                 else "Queued durable menu discovery."
             ),
+            item_count=fast_item_count,
+            source_url=fast_source.source_url if fast_source else None,
+            content_type=fast_source.content_type if fast_source else None,
+            extraction_method=fast_source.extraction_method if fast_source else None,
+            page_count=fast_source.page_count if fast_source else None,
+            extraction_confidence=fast_source.extraction_confidence if fast_source else None,
             document_urls=document_urls,
             total_documents=len(document_urls),
             processed_documents=0,
             menu_version=image_set.version if image_set else None,
+            indexing_status="pending" if fast_item_count else None,
             trace=[
+                *fast_trace,
                 IngestionTraceStep(
-                    id="source_discovery",
-                    label="Discover menu sources",
-                    status="complete",
+                    id="deep_scan",
+                    label="Run deeper menu scan",
+                    status="running" if fast_item_count else "queued",
                     detail=(
-                        f"Selected {len(document_urls)} images from menu edition {image_set.version or 'unknown'}."
-                        if image_set
+                        "Dish-level HTML evidence is published while OCR and rendered extraction continue."
+                        if fast_item_count
                         else "The durable worker will continue menu discovery."
                     ),
-                    provider="squarespace_image_discovery" if image_set else "restaurant_website",
+                    provider="azure_functions",
                     source_url=resolved_url,
-                    item_count=len(document_urls),
+                    item_count=fast_item_count,
                 ),
                 *(
                     [
@@ -302,6 +358,28 @@ async def create_menu_refresh_job(
                         )
                     ]
                     if image_set
+                    else []
+                ),
+                *(
+                    [
+                        IngestionTraceStep(
+                            id="menu_extracted",
+                            label="Menu extracted",
+                            status="complete",
+                            detail=f"Published {fast_item_count} dish-level items from the fast HTML scan.",
+                            provider=fast_source.extraction_method or "fast_html_scan",
+                            item_count=fast_item_count,
+                        ),
+                        IngestionTraceStep(
+                            id="search_index",
+                            label="Index menu evidence",
+                            status="pending",
+                            detail="Menu evidence is visible while the RAG index updates.",
+                            provider="azure_ai_search",
+                            item_count=fast_item_count,
+                        ),
+                    ]
+                    if fast_item_count and fast_source
                     else []
                 ),
             ],
@@ -320,6 +398,8 @@ async def create_menu_refresh_job(
                         "Cloud job could not be saved, so this scan ran directly. "
                         f"Reason: {storage_reason}"
                     ),
+                    fast_source=fast_source,
+                    fast_trace=fast_trace,
                 )
             failed = job.model_copy(
                 update={
@@ -359,6 +439,8 @@ async def create_menu_refresh_job(
                     website_url=resolved_url,
                     restaurant_address=place.get("address"),
                     fallback_detail=f"Durable queue enqueue failed; continued locally. {exc}",
+                    fast_source=fast_source,
+                    fast_trace=fast_trace,
                 )
             failed = job.model_copy(
                 update={
@@ -406,6 +488,8 @@ async def create_menu_refresh_job(
             if refresh_mode == "durable" and not durable_configured
             else None
         ),
+        fast_source=fast_source,
+        fast_trace=fast_trace,
     )
 
 
@@ -416,9 +500,11 @@ def _create_local_menu_refresh_job(
     website_url: str,
     restaurant_address: str | None,
     fallback_detail: str | None = None,
+    fast_source: MenuSource | None = None,
+    fast_trace: list[IngestionTraceStep] | None = None,
 ) -> MenuRefreshJob:
     now = datetime.now(UTC).isoformat()
-    trace: list[IngestionTraceStep] = []
+    trace: list[IngestionTraceStep] = list(fast_trace or [])
     if fallback_detail:
         trace.append(
             IngestionTraceStep(
@@ -429,28 +515,15 @@ def _create_local_menu_refresh_job(
                 provider="direct_menu_scan",
             )
         )
-    source = ingest_menu_from_website(
+    source = fast_source or ingest_menu_from_website(
         restaurant_id=place_id,
         restaurant_name=restaurant_name,
         website_url=website_url,
         restaurant_address=restaurant_address,
         trace=trace,
+        fast_only=True,
     )
     item_count = sum(len(section.items) for section in source.sections)
-    needs_background_refresh = any(step.status == "deferred" for step in trace)
-    status = "complete" if item_count else ("needs_background_refresh" if needs_background_refresh else "failed")
-    message = (
-        f"Captured {item_count} menu item{'s' if item_count != 1 else ''} from {source.source_url}."
-        if item_count
-        else (
-            "Menu candidates were found, but the interactive scan reached its time budget. A background refresh is needed."
-            if needs_background_refresh
-            else (
-                "No reliable dish-level menu items were extracted. "
-                f"Last checked source: {source.source_url or website_url}."
-            )
-        )
-    )
     if item_count:
         trace.append(
             IngestionTraceStep(
@@ -472,37 +545,44 @@ def _create_local_menu_refresh_job(
                 item_count=item_count,
             )
         )
-    else:
-        trace.append(
-            IngestionTraceStep(
-                id="search_index",
-                label="Index menu evidence",
-                status="skipped",
-                detail="Indexing was skipped because no dish-level menu items were extracted.",
-                provider="azure_ai_search",
-                item_count=0,
-            )
+    trace.append(
+        IngestionTraceStep(
+            id="deep_scan",
+            label="Run deeper menu scan",
+            status="running",
+            detail=(
+                "Menu items are available while OCR, rendered extraction, and indexing continue."
+                if item_count
+                else "The fast HTML scan found no dishes; deeper extraction is running."
+            ),
+            provider="background_menu_worker",
+            item_count=item_count,
         )
+    )
 
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
-        status=status,
-        message=message,
+        status="deep_scanning",
+        message="Menu found; deeper scan is running." if item_count else "Deeper menu scan is running.",
         item_count=item_count,
         source_url=source.source_url,
         content_type=source.content_type,
         extraction_method=source.extraction_method,
         page_count=source.page_count,
         extraction_confidence=source.extraction_confidence,
-        indexing_status="pending" if item_count else "skipped",
+        indexing_status="pending" if item_count else None,
         trace=trace,
         created_at=now,
-        completed_at=datetime.now(UTC).isoformat(),
     )
     MENU_REFRESH_JOBS[job.id] = job
-    if item_count:
-        MENU_INDEX_EXECUTOR.submit(_finish_local_menu_index, job.id)
+    MENU_INDEX_EXECUTOR.submit(
+        _finish_local_deep_scan,
+        job.id,
+        restaurant_name,
+        website_url,
+        restaurant_address,
+    )
     return job
 
 
@@ -512,6 +592,138 @@ async def get_menu_refresh_job_service(job_id: str) -> MenuRefreshJob | None:
         MENU_REFRESH_JOBS[job_id] = durable
         return durable
     return MENU_REFRESH_JOBS.get(job_id)
+
+
+def menu_source_is_stale(source: MenuSource) -> bool:
+    raw_hours = os.getenv("MENU_CACHE_TTL_HOURS", "168")
+    try:
+        ttl_hours = max(1, int(raw_hours))
+    except ValueError:
+        ttl_hours = 168
+    if not source.source_timestamp:
+        return True
+    try:
+        fetched_at = datetime.fromisoformat(source.source_timestamp.replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=UTC)
+    except ValueError:
+        return True
+    return (datetime.now(UTC) - fetched_at).total_seconds() > ttl_hours * 3600
+
+
+def _finish_local_deep_scan(
+    job_id: str,
+    restaurant_name: str | None,
+    website_url: str,
+    restaurant_address: str | None,
+) -> None:
+    current = MENU_REFRESH_JOBS.get(job_id)
+    if not current:
+        return
+
+    def persist(job: MenuRefreshJob) -> None:
+        MENU_REFRESH_JOBS[job_id] = job
+        if supabase_store.configured():
+            supabase_store.save_menu_refresh_job(job)
+
+    try:
+        trace = list(current.trace)
+        source = ingest_menu_from_website(
+            restaurant_id=current.place_id,
+            restaurant_name=restaurant_name,
+            website_url=website_url,
+            restaurant_address=restaurant_address,
+            trace=trace,
+            deep_scan=True,
+        )
+        item_count = sum(len(section.items) for section in source.sections)
+        if not item_count:
+            source = load_menu_source(current.place_id) or source
+            item_count = sum(len(section.items) for section in source.sections)
+        if not item_count:
+            failed = current.model_copy(
+                update={
+                    "status": "failed",
+                    "message": "No reliable dish-level menu items were extracted.",
+                    "trace": _upsert_job_trace(
+                        trace,
+                        IngestionTraceStep(
+                            id="deep_scan",
+                            label="Run deeper menu scan",
+                            status="failed",
+                            detail="OCR and rendered extraction produced no reliable dish-level items.",
+                            provider="background_menu_worker",
+                        ),
+                    ),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            persist(failed)
+            return
+        completed = current.model_copy(
+            update={
+                "status": "complete",
+                "message": f"Captured {item_count} menu items; RAG indexing is continuing in the background.",
+                "item_count": item_count,
+                "source_url": source.source_url,
+                "content_type": source.content_type,
+                "extraction_method": source.extraction_method,
+                "page_count": source.page_count,
+                "extraction_confidence": source.extraction_confidence,
+                "indexing_status": "pending",
+                "trace": _upsert_job_trace(
+                    trace,
+                    IngestionTraceStep(
+                        id="deep_scan",
+                        label="Run deeper menu scan",
+                        status="complete",
+                        detail="Background OCR and rendered extraction finished.",
+                        provider="background_menu_worker",
+                        item_count=item_count,
+                    ),
+                ),
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        persist(completed)
+        finish_menu_index(completed, persist=persist, indexer=index_restaurant_menu)
+    except Exception as exc:  # noqa: BLE001 - retain fast evidence if deep enrichment fails
+        latest = MENU_REFRESH_JOBS.get(job_id) or current
+        if latest.item_count:
+            usable = latest.model_copy(
+                update={
+                    "status": "complete",
+                    "message": "Menu found; deeper extraction failed, but fast evidence remains available.",
+                    "indexing_status": "pending",
+                    "trace": _upsert_job_trace(
+                        latest.trace,
+                        IngestionTraceStep(
+                            id="deep_scan",
+                            label="Run deeper menu scan",
+                            status="failed",
+                            detail=str(exc) or "Deeper extraction failed.",
+                            provider="background_menu_worker",
+                        ),
+                    ),
+                    "completed_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            persist(usable)
+            finish_menu_index(usable, persist=persist, indexer=index_restaurant_menu)
+            return
+        persist(
+            latest.model_copy(
+                update={
+                    "status": "failed",
+                    "message": str(exc) or "Deeper menu extraction failed.",
+                    "completed_at": datetime.now(UTC).isoformat(),
+                }
+            )
+        )
+
+
+def _upsert_job_trace(trace: list[IngestionTraceStep], step: IngestionTraceStep) -> list[IngestionTraceStep]:
+    return [existing for existing in trace if existing.id != step.id] + [step]
 
 
 def _finish_local_menu_index(job_id: str) -> None:

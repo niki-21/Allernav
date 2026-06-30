@@ -253,10 +253,17 @@ async def menu_refresh_endpoint(
     place_id: str,
     restaurant_name: str | None = Query(default=None),
     website_url: str | None = Query(default=None),
+    force_refresh: bool = Query(default=False),
     client: GooglePlacesClient = Depends(get_places_client),
 ) -> MenuRefreshJob:
     try:
-        return await create_menu_refresh_job(place_id, restaurant_name, website_url, client)
+        return await create_menu_refresh_job(
+            place_id,
+            restaurant_name,
+            website_url,
+            client,
+            force_refresh=force_refresh,
+        )
     except GooglePlacesError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

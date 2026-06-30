@@ -7,7 +7,7 @@ from allernav_api.document_intelligence import DocumentExtraction
 from allernav_api.menu_job_queue import MenuRefreshMessage
 from allernav_api.menu_indexing import finish_menu_index
 from allernav_api.menu_worker import process_menu_refresh_message
-from allernav_api.models import MenuItem, MenuRefreshJob, MenuSection, SearchIndexResponse
+from allernav_api.models import MenuItem, MenuRefreshJob, MenuSection, MenuSource, SearchIndexResponse, SourceType
 
 
 MESSAGE = MenuRefreshMessage(
@@ -121,6 +121,45 @@ class MenuWorkerTests(unittest.TestCase):
         self.assertEqual(result.indexing_status, "failed")
         self.assertIn("menu remains available", result.message)
         self.assertEqual(result.trace[-1].status, "failed")
+
+    def test_discovery_worker_runs_deep_scan_after_fast_menu_publish(self) -> None:
+        message = MenuRefreshMessage(
+            version=MESSAGE.version,
+            job_id=MESSAGE.job_id,
+            place_id=MESSAGE.place_id,
+            restaurant_name=MESSAGE.restaurant_name,
+            website_url=MESSAGE.website_url,
+            document_urls=[],
+            menu_version=MESSAGE.menu_version,
+        )
+        existing = MenuRefreshJob(
+            id=message.job_id,
+            place_id=message.place_id,
+            status="deep_scanning",
+            message="Menu found; deeper scan is running.",
+            item_count=1,
+            indexing_status="pending",
+            created_at="2026-06-29T00:00:00+00:00",
+        )
+        source = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url=message.website_url,
+            reliability=0.9,
+            sections=[MenuSection(title="Dinner", items=[MenuItem(name="Rice Bowl")])],
+        )
+
+        with patch("allernav_api.menu_worker.supabase_store.load_menu_refresh_job", return_value=existing), patch(
+            "allernav_api.menu_worker.supabase_store.save_menu_refresh_job", return_value=True
+        ), patch(
+            "allernav_api.menu_worker.ingest_menu_from_website", return_value=source
+        ) as ingest, patch(
+            "allernav_api.menu_worker.finish_menu_index", side_effect=lambda job, persist: job
+        ):
+            result = process_menu_refresh_message(message)
+
+        self.assertEqual(result.status, "complete")
+        self.assertTrue(ingest.call_args.kwargs["deep_scan"])
+        self.assertEqual(next(step for step in result.trace if step.id == "deep_scan").status, "complete")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,19 @@ test("buildMenuRefreshPayload includes restaurant name and website url", () => {
     {
       restaurant_name: "Nami Nori Williamsburg",
       website_url: "https://example.com/menu",
+      force_refresh: false,
     },
+  );
+});
+
+test("buildMenuRefreshPayload marks explicit refreshes", () => {
+  assert.equal(
+    buildMenuRefreshPayload({
+      placeName: "Angel",
+      websiteUrl: "https://example.com/menu",
+      forceRefresh: true,
+    }).force_refresh,
+    true,
   );
 });
 
@@ -141,6 +153,23 @@ test("Menu tab leads with the fit score and possible lower-risk section", () => 
   assert.ok(possibleIndex < checkIndex && checkIndex < avoidIndex && avoidIndex < insufficientIndex);
   assert.ok(source.includes('<details className="menu-trace">'));
   assert.equal(source.includes('<details className="menu-trace" open>'), false);
+});
+
+test("TrustPanel keeps Overview and Menu restaurant fit messaging consistent", () => {
+  const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("restaurant-fit-badge"));
+  assert.ok(source.includes("restaurantFitScore >= 70"));
+  assert.ok(source.includes("restaurantFitScore >= 45"));
+  assert.ok(source.includes("agentRecommendation && !hasRestaurantFit"));
+  assert.ok(source.includes("Restaurant allergy fit: {restaurantFitScore}/100 · {restaurantFitLabel}"));
+  assert.ok(source.includes("Some dishes contain your allergens, but many menu items may be possible lower-risk after staff verification."));
+});
+
+test("TrustPanel exposes the fast and deep menu scan lifecycle", () => {
+  const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes('"Menu found · deeper scan running"'));
+  assert.ok(source.includes('"Menu found · RAG index ready"'));
+  assert.ok(source.includes("Refresh menu"));
 });
 
 test("menuScanErrorMessage converts abort and timeout errors to user-facing copy", () => {

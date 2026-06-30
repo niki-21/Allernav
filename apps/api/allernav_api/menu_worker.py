@@ -273,6 +273,7 @@ def _process_discovery_fallback(job: MenuRefreshJob, message: MenuRefreshMessage
         website_url=message.website_url,
         db_path=Path("/tmp/allernav-menu-worker.sqlite"),
         trace=job.trace,
+        deep_scan=True,
     )
     item_count = sum(len(section.items) for section in source.sections)
     if not item_count:
@@ -291,7 +292,17 @@ def _process_discovery_fallback(job: MenuRefreshJob, message: MenuRefreshMessage
             "completed_at": datetime.now(UTC).isoformat(),
             "trace": _upsert_trace(
                 _upsert_trace(
-                    job.trace,
+                    _upsert_trace(
+                        job.trace,
+                        IngestionTraceStep(
+                            id="deep_scan",
+                            label="Run deeper menu scan",
+                            status="complete",
+                            detail="Background OCR and rendered extraction finished.",
+                            provider="azure_functions",
+                            item_count=item_count,
+                        ),
+                    ),
                     IngestionTraceStep(
                         id="menu_extracted",
                         label="Menu extracted",
