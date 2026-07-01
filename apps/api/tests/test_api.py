@@ -207,6 +207,37 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json(), diagnostics)
         self.assertNotIn("service_role_key", response.text)
 
+    def test_menu_refresh_endpoint_converts_unexpected_exception_to_failed_job(self) -> None:
+        with patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "route-secret"}), patch(
+            "app.create_menu_refresh_job",
+            new=AsyncMock(side_effect=RuntimeError("Refresh exploded token=route-secret")),
+        ):
+            response = TestClient(app).post(
+                "/api/places/broken/menu-refresh",
+                params={"restaurant_name": "Broken", "website_url": "https://example.com/menu"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("RuntimeError: Refresh exploded", payload["message"])
+        self.assertNotIn("route-secret", response.text)
+        self.assertEqual(payload["trace"][0]["id"], "menu_ingestion_error")
+        self.assertEqual(payload["trace"][0]["provider"], "fastapi")
+
+    def test_place_menu_endpoint_returns_failed_model_on_unexpected_exception(self) -> None:
+        with patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "menu-secret"}), patch(
+            "app.get_place_menu_service",
+            new=AsyncMock(side_effect=RuntimeError("Menu load failed token=menu-secret")),
+        ):
+            response = TestClient(app).get("/api/places/broken/menu")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["place_id"], "broken")
+        self.assertEqual(response.json()["status"], "failed")
+        self.assertEqual(response.json()["sections"], [])
+        self.assertNotIn("menu-secret", response.text)
+
     def test_menu_refresh_mode_defaults_and_local_override(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(menu_refresh_mode(), "auto")
@@ -894,6 +925,39 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(by_id["place-0"].scan_job_id)
         self.assertEqual(by_id["place-1"].evidence_status, "scan_running")
         self.assertEqual(response.scan_job_ids, ["job-1"])
+
+    def test_nearby_rag_endpoint_returns_200_when_one_background_scan_raises(self) -> None:
+        payload = {
+            "candidate_places": [
+                {
+                    "id": f"place-{index}",
+                    "name": f"Place {index}",
+                    "location": {"lat": 40 + index / 100, "lng": -73},
+                    "website_url": f"https://place-{index}.example",
+                }
+                for index in range(2)
+            ],
+            "allergens": ["sesame"],
+            "allow_background_scan": True,
+        }
+        successful_job = MenuRefreshJob(
+            id="job-1",
+            place_id="place-1",
+            status="running",
+            message="Menu found; deeper scan is running.",
+            created_at="2026-06-30T00:00:00Z",
+        )
+
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
+            "allernav_api.service.create_menu_refresh_job",
+            new=AsyncMock(side_effect=[RuntimeError("one scan failed"), successful_job]),
+        ):
+            response = TestClient(app).post("/api/rag/nearby-suggestions", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        by_id = {item["place"]["id"]: item for item in response.json()["places"]}
+        self.assertEqual(by_id["place-0"]["evidence_status"], "scan_failed")
+        self.assertEqual(by_id["place-1"]["evidence_status"], "scan_running")
 
     def test_nearby_rag_without_allergens_uses_general_discovery_ranking(self) -> None:
         center = LatLng(lat=40.0, lng=-73.0)

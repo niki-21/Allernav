@@ -256,12 +256,39 @@ async def create_menu_refresh_job(
         resolved_name = resolved_name or place.get("name")
         resolved_url = place.get("website_uri")
 
+    refresh_mode = menu_refresh_mode()
+    durable_configured = service_bus_menu_queue_configured() and supabase_store.configured()
+    fast_item_count = 0
+    durable_save_succeeded: bool | None = None
+    queue_enqueue_succeeded: bool | None = None
+
+    def finish(job: MenuRefreshJob) -> MenuRefreshJob:
+        log_menu_event(
+            "menu_refresh_finished",
+            place_id=place_id,
+            restaurant_name=sanitize_log_text(resolved_name),
+            website_url_present=bool(resolved_url),
+            force_refresh=force_refresh,
+            allow_local_fallback=allow_local_fallback,
+            refresh_mode=refresh_mode,
+            durable_configured=durable_configured,
+            fast_item_count=fast_item_count,
+            durable_save_succeeded=durable_save_succeeded,
+            queue_enqueue_succeeded=queue_enqueue_succeeded,
+            final_job_status=job.status,
+        )
+        return job
+
     log_menu_event(
         "menu_refresh_requested",
+        place_id=place_id,
         restaurant_name=sanitize_log_text(resolved_name),
         website_url=sanitize_source_url(resolved_url),
+        website_url_present=bool(resolved_url),
         force_refresh=force_refresh,
         allow_local_fallback=allow_local_fallback,
+        refresh_mode=refresh_mode,
+        durable_configured=durable_configured,
     )
 
     if not resolved_url:
@@ -274,7 +301,7 @@ async def create_menu_refresh_job(
             completed_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
-        return job
+        return finish(job)
 
     cached_source = load_menu_source(place_id)
     if cached_source and not force_refresh and not menu_source_is_stale(cached_source):
@@ -305,7 +332,7 @@ async def create_menu_refresh_job(
             completed_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
-        return job
+        return finish(job)
 
     fast_trace: list[IngestionTraceStep] = []
     fast_source = None
@@ -320,16 +347,22 @@ async def create_menu_refresh_job(
                 fast_only=True,
             )
         except Exception as exc:  # noqa: BLE001 - return a diagnostic job instead of an HTTP 500
-            return _failed_menu_ingestion_job(
-                place_id=place_id,
-                trace=fast_trace,
-                detail=sanitize_ingestion_exception(exc),
-                created_at=now,
+            return finish(
+                _failed_menu_ingestion_job(
+                    place_id=place_id,
+                    trace=fast_trace,
+                    detail=sanitize_ingestion_exception(exc),
+                    created_at=now,
+                )
             )
     fast_item_count = sum(len(section.items) for section in fast_source.sections) if fast_source else 0
-
-    refresh_mode = menu_refresh_mode()
-    durable_configured = service_bus_menu_queue_configured() and supabase_store.configured()
+    log_menu_event(
+        "menu_refresh_fast_scan_finished",
+        place_id=place_id,
+        fast_item_count=fast_item_count,
+        refresh_mode=refresh_mode,
+        durable_configured=durable_configured,
+    )
     if refresh_mode != "local" and durable_configured:
         image_set = _discover_squarespace_image_set(resolved_url) if allow_local_fallback and not fast_item_count else None
         document_urls = image_set.document_urls if image_set else []
@@ -411,20 +444,29 @@ async def create_menu_refresh_job(
             created_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
-        if not supabase_store.save_menu_refresh_job(job):
+        durable_save_succeeded = supabase_store.save_menu_refresh_job(job)
+        log_menu_event(
+            "menu_refresh_durable_save",
+            place_id=place_id,
+            durable_save_succeeded=durable_save_succeeded,
+            fast_item_count=fast_item_count,
+        )
+        if not durable_save_succeeded:
             storage_reason = supabase_store.last_error() or "Supabase rejected the menu refresh job."
             if allow_local_fallback and (refresh_mode == "auto" or not production_environment()):
-                return _create_local_menu_refresh_job(
-                    place_id=place_id,
-                    restaurant_name=resolved_name,
-                    website_url=resolved_url,
-                    restaurant_address=place.get("address"),
-                    fallback_detail=(
-                        "Cloud job could not be saved, so this scan ran directly. "
-                        f"Reason: {storage_reason}"
-                    ),
-                    fast_source=fast_source,
-                    fast_trace=fast_trace,
+                return finish(
+                    _create_local_menu_refresh_job(
+                        place_id=place_id,
+                        restaurant_name=resolved_name,
+                        website_url=resolved_url,
+                        restaurant_address=place.get("address"),
+                        fallback_detail=(
+                            "Cloud job could not be saved, so this scan ran directly. "
+                            f"Reason: {storage_reason}"
+                        ),
+                        fast_source=fast_source,
+                        fast_trace=fast_trace,
+                    )
                 )
             failed = job.model_copy(
                 update={
@@ -434,7 +476,7 @@ async def create_menu_refresh_job(
                 }
             )
             MENU_REFRESH_JOBS[job.id] = failed
-            return failed
+            return finish(failed)
         try:
             enqueue_menu_refresh(
                 MenuRefreshMessage(
@@ -447,37 +489,55 @@ async def create_menu_refresh_job(
                     menu_version=image_set.version if image_set else None,
                 )
             )
+            queue_enqueue_succeeded = True
+            log_menu_event(
+                "menu_refresh_queue_enqueue",
+                place_id=place_id,
+                queue_enqueue_succeeded=True,
+                job_id=job.id,
+            )
         except RuntimeError as exc:
+            queue_enqueue_succeeded = False
+            detail = sanitize_ingestion_exception(exc)
+            log_menu_event(
+                "menu_refresh_queue_enqueue",
+                place_id=place_id,
+                queue_enqueue_succeeded=False,
+                job_id=job.id,
+                error=detail,
+            )
             if allow_local_fallback and (refresh_mode == "auto" or not production_environment()):
                 failed = job.model_copy(
                     update={
                         "status": "failed",
-                        "message": f"Durable queue enqueue failed; local fallback started. {exc}",
+                        "message": f"Durable queue enqueue failed; local fallback started. {detail}",
                         "completed_at": datetime.now(UTC).isoformat(),
                     }
                 )
                 MENU_REFRESH_JOBS[job.id] = failed
                 supabase_store.save_menu_refresh_job(failed)
-                return _create_local_menu_refresh_job(
-                    place_id=place_id,
-                    restaurant_name=resolved_name,
-                    website_url=resolved_url,
-                    restaurant_address=place.get("address"),
-                    fallback_detail=f"Durable queue enqueue failed; continued locally. {exc}",
-                    fast_source=fast_source,
-                    fast_trace=fast_trace,
+                return finish(
+                    _create_local_menu_refresh_job(
+                        place_id=place_id,
+                        restaurant_name=resolved_name,
+                        website_url=resolved_url,
+                        restaurant_address=place.get("address"),
+                        fallback_detail=f"Durable queue enqueue failed; continued locally. {detail}",
+                        fast_source=fast_source,
+                        fast_trace=fast_trace,
+                    )
                 )
             failed = job.model_copy(
                 update={
                     "status": "failed",
-                    "message": str(exc),
+                    "message": detail,
                     "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             MENU_REFRESH_JOBS[job.id] = failed
             supabase_store.save_menu_refresh_job(failed)
-            return failed
-        return job
+            return finish(failed)
+        return finish(job)
 
     if refresh_mode == "durable" and production_environment():
         job = MenuRefreshJob(
@@ -489,7 +549,7 @@ async def create_menu_refresh_job(
             completed_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
-        return job
+        return finish(job)
 
     if not allow_local_fallback:
         job = MenuRefreshJob(
@@ -501,20 +561,22 @@ async def create_menu_refresh_job(
             completed_at=now,
         )
         MENU_REFRESH_JOBS[job.id] = job
-        return job
+        return finish(job)
 
-    return _create_local_menu_refresh_job(
-        place_id=place_id,
-        restaurant_name=resolved_name,
-        website_url=resolved_url,
-        restaurant_address=place.get("address"),
-        fallback_detail=(
-            "Durable services were unavailable; continued with local ingestion."
-            if refresh_mode == "durable" and not durable_configured
-            else None
-        ),
-        fast_source=fast_source,
-        fast_trace=fast_trace,
+    return finish(
+        _create_local_menu_refresh_job(
+            place_id=place_id,
+            restaurant_name=resolved_name,
+            website_url=resolved_url,
+            restaurant_address=place.get("address"),
+            fallback_detail=(
+                "Durable services were unavailable; continued with local ingestion."
+                if refresh_mode == "durable" and not durable_configured
+                else None
+            ),
+            fast_source=fast_source,
+            fast_trace=fast_trace,
+        )
     )
 
 

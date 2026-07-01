@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +22,7 @@ from allernav_api.models import (
     FeedbackResponse,
     HybridSearchRequest,
     HybridSearchResponse,
+    IngestionTraceStep,
     MenuRefreshJob,
     NearbySuggestionRequest,
     NearbySuggestionResponse,
@@ -35,6 +38,7 @@ from allernav_api.models import (
     UserProfileResponse,
 )
 from allernav_api.rag_service import azure_openai_chat_configured, suggest_nearby_places_service
+from allernav_api.menu_ingestion import log_menu_event, sanitize_ingestion_exception
 from allernav_api import supabase_store
 from allernav_api.agent_service import (
     analyze_menu_service,
@@ -235,7 +239,12 @@ async def place_menu_endpoint(
     place_id: str,
     allergens: list[AllergyTag] = Query(default_factory=list),
 ) -> PlaceMenu:
-    return await get_place_menu_service(place_id, allergens)
+    try:
+        return await get_place_menu_service(place_id, allergens)
+    except Exception as exc:  # noqa: BLE001 - keep menu reads response-model safe
+        detail = sanitize_ingestion_exception(exc)
+        log_menu_event("place_menu_failed", place_id=place_id, error=detail)
+        return PlaceMenu(place_id=place_id, status="failed")
 
 
 @app.get("/api/places/{place_id}/reviews", response_model=list[PlaceReviewSnippet])
@@ -265,7 +274,32 @@ async def menu_refresh_endpoint(
             force_refresh=force_refresh,
         )
     except GooglePlacesError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return failed_menu_refresh_job(place_id, exc)
+    except Exception as exc:  # noqa: BLE001 - return a diagnostic job instead of FastAPI's raw 500
+        return failed_menu_refresh_job(place_id, exc)
+
+
+def failed_menu_refresh_job(place_id: str, exc: BaseException) -> MenuRefreshJob:
+    now = datetime.now(UTC).isoformat()
+    detail = sanitize_ingestion_exception(exc)
+    log_menu_event("menu_refresh_endpoint_failed", place_id=place_id, error=detail)
+    return MenuRefreshJob(
+        id=str(uuid4()),
+        place_id=place_id,
+        status="failed",
+        message=detail,
+        trace=[
+            IngestionTraceStep(
+                id="menu_ingestion_error",
+                label="Run menu discovery",
+                status="failed",
+                provider="fastapi",
+                detail=detail,
+            )
+        ],
+        created_at=now,
+        completed_at=now,
+    )
 
 
 @app.get("/api/menu-refresh-jobs/{job_id}", response_model=MenuRefreshJob)
