@@ -318,6 +318,9 @@ export default function TrustPanel({
               ? { className: "rag-updating", label: "RAG index updating" }
               : null;
   const refreshFailed = menuRefreshJob?.status === "failed";
+  const refreshFailureDetail = refreshFailed
+    ? menuRefreshJob?.message || menuRefreshJob?.trace.find((step) => step.id === "menu_ingestion_error")?.detail
+    : null;
   const refreshPending =
     isMenuLoading ||
     ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "needs_background_refresh"].includes(
@@ -476,13 +479,15 @@ export default function TrustPanel({
                     : `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} found.`
                   : refreshPending
                     ? "Menu scan is still running."
+                  : refreshFailureDetail
+                    ? refreshFailureDetail
                   : scanHasRun
                     ? "No stored menu evidence yet."
                     : "No menu scanned yet."}
               </p>
               {menuEvidenceLine && <p className="muted-line">{menuEvidenceLine}</p>}
               {refreshFailed && menuItemCount > 0 && (
-                <p className="menu-refresh-warning">Latest saved menu shown; refresh failed.</p>
+                <p className="menu-refresh-warning">Latest saved menu shown. {refreshFailureDetail}</p>
               )}
               {refreshPending && menuItemCount > 0 && (
                 <p className="muted-line">Latest saved menu shown while the refresh continues.</p>

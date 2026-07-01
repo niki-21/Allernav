@@ -203,6 +203,18 @@ test("TrustPanel exposes the fast and deep menu scan lifecycle", () => {
   assert.ok(source.includes('"Menu found · deeper scan running"'));
   assert.ok(source.includes('"Menu found · RAG index ready"'));
   assert.ok(source.includes("Refresh menu"));
+  assert.ok(source.includes("menuRefreshJob?.message"));
+});
+
+test("menu refresh proxy preserves backend diagnostics", () => {
+  const source = readFileSync(
+    new URL("../../app/api/places/[placeId]/menu-refresh/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(source.includes("FastAPI menu ingestion failed"), false);
+  assert.ok(source.includes('id: "menu_ingestion_error"'));
+  assert.ok(source.includes('console.info("[menu-refresh] request"'));
+  assert.ok(source.includes("return NextResponse.json(body, { status: response.status })"));
 });
 
 test("Agentic RAG technical trace stays collapsed", () => {

@@ -298,6 +298,51 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.sections[0].items[0].name, "Chicken Alfredo")
 
+    def test_ingestion_exception_adds_sanitized_fastapi_trace(self) -> None:
+        trace = []
+
+        def broken_fetch(_url: str) -> str | None:
+            raise RuntimeError("Fetcher failed api_key=top-secret-value")
+
+        with patch.dict(os.environ, {"GOOGLE_SEARCH_API_KEY": "top-secret-value"}):
+            with self.assertRaises(RuntimeError):
+                ingest_menu_from_website(
+                    restaurant_id="broken-ingestion",
+                    restaurant_name="Broken Ingestion",
+                    website_url="https://example.com/menu?token=private",
+                    fetch_html=broken_fetch,
+                    db_path=self.db_path,
+                    trace=trace,
+                )
+
+        error_step = next(step for step in trace if step.id == "menu_ingestion_error")
+        self.assertEqual(error_step.label, "Run menu discovery")
+        self.assertEqual(error_step.status, "failed")
+        self.assertEqual(error_step.provider, "fastapi")
+        self.assertIn("RuntimeError: Fetcher failed", error_step.detail)
+        self.assertNotIn("top-secret-value", error_step.detail)
+        self.assertNotIn("token=private", error_step.source_url or "")
+
+    def test_ingestion_logs_stage_counts_without_url_query(self) -> None:
+        with patch("allernav_api.menu_ingestion.LOGGER.info") as log_info:
+            source = ingest_menu_from_website(
+                restaurant_id="logged-menu",
+                restaurant_name="Logged Menu",
+                website_url="https://example.com/menu?token=private",
+                fetch_html=lambda _url: SIMPLE_HTML_MENU,
+                db_path=self.db_path,
+                fast_only=True,
+            )
+
+        log_output = "\n".join(str(call) for call in log_info.call_args_list)
+        self.assertTrue(source.sections)
+        self.assertIn("menu_ingestion_started", log_output)
+        self.assertIn("menu_ingestion_candidates", log_output)
+        self.assertIn('"static_candidate_count"', log_output)
+        self.assertIn('"document_candidate_count"', log_output)
+        self.assertIn('"final_item_count": 1', log_output)
+        self.assertNotIn("token=private", log_output)
+
     def test_static_menu_ingestion_does_not_wait_for_rendered_discovery(self) -> None:
         pages = {
             "https://restaurant.example/": '<a href="/menu">Menu</a>',

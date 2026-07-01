@@ -97,6 +97,8 @@ class MenuWorkerTests(unittest.TestCase):
 
         self.assertEqual(saved_jobs[-1].status, "failed")
         self.assertIn("after 3 attempts", saved_jobs[-1].message)
+        self.assertEqual(saved_jobs[-1].trace[-1].id, "menu_ingestion_error")
+        self.assertEqual(saved_jobs[-1].trace[-1].provider, "fastapi")
 
     def test_index_failure_keeps_published_menu_complete(self) -> None:
         job = MenuRefreshJob(
@@ -160,6 +162,37 @@ class MenuWorkerTests(unittest.TestCase):
         self.assertEqual(result.status, "complete")
         self.assertTrue(ingest.call_args.kwargs["deep_scan"])
         self.assertEqual(next(step for step in result.trace if step.id == "deep_scan").status, "complete")
+
+    def test_discovery_worker_uses_clear_terminal_message_when_no_items_are_found(self) -> None:
+        message = MenuRefreshMessage(
+            version=MESSAGE.version,
+            job_id=MESSAGE.job_id,
+            place_id=MESSAGE.place_id,
+            restaurant_name=MESSAGE.restaurant_name,
+            website_url=MESSAGE.website_url,
+            document_urls=[],
+            menu_version=MESSAGE.menu_version,
+        )
+        empty_source = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url=message.website_url,
+            reliability=0.2,
+            sections=[],
+        )
+        saved_jobs = []
+
+        with patch("allernav_api.menu_worker.supabase_store.load_menu_refresh_job", return_value=None), patch(
+            "allernav_api.menu_worker.supabase_store.save_menu_refresh_job",
+            side_effect=lambda job: saved_jobs.append(job) or True,
+        ), patch(
+            "allernav_api.menu_worker.ingest_menu_from_website", return_value=empty_source
+        ):
+            with self.assertRaises(RuntimeError):
+                process_menu_refresh_message(message, attempt=3)
+
+        self.assertEqual(saved_jobs[-1].status, "failed")
+        self.assertEqual(saved_jobs[-1].message, "No reliable dish-level menu items were extracted.")
+        self.assertEqual(saved_jobs[-1].trace[-1].id, "menu_ingestion_error")
 
 
 if __name__ == "__main__":

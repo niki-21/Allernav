@@ -8,7 +8,13 @@ from pathlib import Path
 from . import supabase_store
 from .document_intelligence import DocumentExtraction, extract_document_from_url
 from .menu_indexing import finish_menu_index
-from .menu_ingestion import ingest_menu_from_website, sanitize_sections, save_menu_source, summarize_menu_text
+from .menu_ingestion import (
+    ingest_menu_from_website,
+    sanitize_ingestion_exception,
+    sanitize_sections,
+    save_menu_source,
+    summarize_menu_text,
+)
 from .menu_job_queue import MenuRefreshMessage
 from .menu_normalization import extract_english_menu_page
 from .models import IngestionTraceStep, MenuRefreshJob, MenuSection, MenuSource, SourceType
@@ -39,11 +45,15 @@ def process_menu_refresh_message(
         return job
     except Exception as exc:
         terminal = attempt >= 3
+        detail = sanitize_ingestion_exception(exc)
+        no_items_extracted = str(exc) == "No reliable dish-level menu items were extracted."
         failed = job.model_copy(
             update={
                 "status": "failed" if terminal else "queued",
                 "message": (
-                    f"Menu processing failed after {attempt} attempts: {exc}"
+                    "No reliable dish-level menu items were extracted."
+                    if terminal and no_items_extracted
+                    else f"Menu processing failed after {attempt} attempts: {detail}"
                     if terminal
                     else f"Menu processing attempt {attempt} failed and will be retried."
                 ),
@@ -51,11 +61,11 @@ def process_menu_refresh_message(
                 "trace": _upsert_trace(
                     job.trace,
                     IngestionTraceStep(
-                        id="worker_error",
-                        label="Process menu job",
-                        status="failed" if terminal else "queued",
-                        detail=str(exc) if terminal else "The durable queue will retry this job.",
-                        provider="azure_functions",
+                        id="menu_ingestion_error",
+                        label="Run menu discovery",
+                        status="failed",
+                        detail=detail,
+                        provider="fastapi",
                     ),
                 ),
             }

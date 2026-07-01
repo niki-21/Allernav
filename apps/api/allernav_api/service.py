@@ -14,8 +14,12 @@ from .menu_ingestion import (
     extract_candidate_menu_urls,
     fetch_html_url,
     ingest_menu_from_website,
+    log_menu_event,
     load_menu_source,
     load_place_menu,
+    sanitize_ingestion_exception,
+    sanitize_log_text,
+    sanitize_source_url,
 )
 from .menu_indexing import finish_menu_index
 from .menu_job_queue import MenuRefreshMessage, enqueue_menu_refresh, service_bus_menu_queue_configured
@@ -252,6 +256,14 @@ async def create_menu_refresh_job(
         resolved_name = resolved_name or place.get("name")
         resolved_url = place.get("website_uri")
 
+    log_menu_event(
+        "menu_refresh_requested",
+        restaurant_name=sanitize_log_text(resolved_name),
+        website_url=sanitize_source_url(resolved_url),
+        force_refresh=force_refresh,
+        allow_local_fallback=allow_local_fallback,
+    )
+
     if not resolved_url:
         job = MenuRefreshJob(
             id=str(uuid4()),
@@ -298,14 +310,22 @@ async def create_menu_refresh_job(
     fast_trace: list[IngestionTraceStep] = []
     fast_source = None
     if allow_local_fallback:
-        fast_source = ingest_menu_from_website(
-            restaurant_id=place_id,
-            restaurant_name=resolved_name,
-            website_url=resolved_url,
-            restaurant_address=place.get("address"),
-            trace=fast_trace,
-            fast_only=True,
-        )
+        try:
+            fast_source = ingest_menu_from_website(
+                restaurant_id=place_id,
+                restaurant_name=resolved_name,
+                website_url=resolved_url,
+                restaurant_address=place.get("address"),
+                trace=fast_trace,
+                fast_only=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - return a diagnostic job instead of an HTTP 500
+            return _failed_menu_ingestion_job(
+                place_id=place_id,
+                trace=fast_trace,
+                detail=sanitize_ingestion_exception(exc),
+                created_at=now,
+            )
     fast_item_count = sum(len(section.items) for section in fast_source.sections) if fast_source else 0
 
     refresh_mode = menu_refresh_mode()
@@ -520,14 +540,22 @@ def _create_local_menu_refresh_job(
                 provider="direct_menu_scan",
             )
         )
-    source = fast_source or ingest_menu_from_website(
-        restaurant_id=place_id,
-        restaurant_name=restaurant_name,
-        website_url=website_url,
-        restaurant_address=restaurant_address,
-        trace=trace,
-        fast_only=True,
-    )
+    try:
+        source = fast_source or ingest_menu_from_website(
+            restaurant_id=place_id,
+            restaurant_name=restaurant_name,
+            website_url=website_url,
+            restaurant_address=restaurant_address,
+            trace=trace,
+            fast_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - convert ingestion exceptions into a pollable job
+        return _failed_menu_ingestion_job(
+            place_id=place_id,
+            trace=trace,
+            detail=sanitize_ingestion_exception(exc),
+            created_at=now,
+        )
     item_count = sum(len(section.items) for section in source.sections)
     if item_count:
         trace.append(
@@ -631,8 +659,8 @@ def _finish_local_deep_scan(
         if supabase_store.configured():
             supabase_store.save_menu_refresh_job(job)
 
+    trace = list(current.trace)
     try:
-        trace = list(current.trace)
         source = ingest_menu_from_website(
             restaurant_id=current.place_id,
             restaurant_name=restaurant_name,
@@ -694,19 +722,31 @@ def _finish_local_deep_scan(
         finish_menu_index(completed, persist=persist, indexer=index_restaurant_menu)
     except Exception as exc:  # noqa: BLE001 - retain fast evidence if deep enrichment fails
         latest = MENU_REFRESH_JOBS.get(job_id) or current
+        detail = sanitize_ingestion_exception(exc)
+        error_trace = _upsert_job_trace(
+            trace,
+            IngestionTraceStep(
+                id="menu_ingestion_error",
+                label="Run menu discovery",
+                status="failed",
+                detail=detail,
+                provider="fastapi",
+                source_url=sanitize_source_url(website_url),
+            ),
+        )
         if latest.item_count:
             usable = latest.model_copy(
                 update={
                     "status": "complete",
-                    "message": "Menu found; deeper extraction failed, but fast evidence remains available.",
+                    "message": f"Menu found; deeper extraction failed, but fast evidence remains available. {detail}",
                     "indexing_status": "pending",
                     "trace": _upsert_job_trace(
-                        latest.trace,
+                        error_trace,
                         IngestionTraceStep(
                             id="deep_scan",
                             label="Run deeper menu scan",
                             status="failed",
-                            detail=str(exc) or "Deeper extraction failed.",
+                            detail=detail,
                             provider="background_menu_worker",
                         ),
                     ),
@@ -720,11 +760,44 @@ def _finish_local_deep_scan(
             latest.model_copy(
                 update={
                     "status": "failed",
-                    "message": str(exc) or "Deeper menu extraction failed.",
+                    "message": f"Menu ingestion failed: {detail}",
+                    "trace": error_trace,
                     "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
         )
+
+
+def _failed_menu_ingestion_job(
+    *,
+    place_id: str,
+    trace: list[IngestionTraceStep],
+    detail: str,
+    created_at: str,
+) -> MenuRefreshJob:
+    diagnostic_trace = _upsert_job_trace(
+        trace,
+        IngestionTraceStep(
+            id="menu_ingestion_error",
+            label="Run menu discovery",
+            status="failed",
+            detail=detail,
+            provider="fastapi",
+        ),
+    )
+    job = MenuRefreshJob(
+        id=str(uuid4()),
+        place_id=place_id,
+        status="failed",
+        message=f"Menu ingestion failed: {detail}",
+        trace=diagnostic_trace,
+        created_at=created_at,
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+    MENU_REFRESH_JOBS[job.id] = job
+    if supabase_store.configured():
+        supabase_store.save_menu_refresh_job(job)
+    return job
 
 
 def _upsert_job_trace(trace: list[IngestionTraceStep], step: IngestionTraceStep) -> list[IngestionTraceStep]:

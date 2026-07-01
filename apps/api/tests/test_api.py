@@ -509,6 +509,61 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job.status, "running")
         self.assertTrue(ingest.call_args.kwargs["fast_only"])
 
+    def test_menu_refresh_returns_sanitized_ingestion_error_job(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"MENU_REFRESH_MODE": "local", "AZURE_OPENAI_API_KEY": "super-secret-key"},
+        ), patch(
+            "allernav_api.service.load_menu_source", return_value=None
+        ), patch(
+            "allernav_api.service.supabase_store.configured", return_value=False
+        ), patch(
+            "allernav_api.service.ingest_menu_from_website",
+            side_effect=RuntimeError("Parser crashed token=super-secret-key"),
+        ):
+            job = asyncio.run(
+                create_menu_refresh_job(
+                    "broken-menu",
+                    restaurant_name="Broken Menu",
+                    website_url="https://example.com/menu?token=private",
+                )
+            )
+
+        self.assertEqual(job.status, "failed")
+        self.assertIn("RuntimeError: Parser crashed", job.message)
+        self.assertNotIn("super-secret-key", job.message)
+        error_step = next(step for step in job.trace if step.id == "menu_ingestion_error")
+        self.assertEqual(error_step.label, "Run menu discovery")
+        self.assertEqual(error_step.status, "failed")
+        self.assertEqual(error_step.provider, "fastapi")
+        self.assertNotIn("super-secret-key", error_step.detail)
+
+    def test_empty_fast_scan_remains_running_until_deep_scan_finishes(self) -> None:
+        empty_source = MenuSource(
+            source_type=SourceType.RESTAURANT_WEBSITE,
+            source_url="https://example.com/menu",
+            reliability=0.2,
+            sections=[],
+        )
+        with patch.dict(os.environ, {"MENU_REFRESH_MODE": "local"}), patch(
+            "allernav_api.service.load_menu_source", return_value=None
+        ), patch(
+            "allernav_api.service.ingest_menu_from_website", return_value=empty_source
+        ), patch(
+            "allernav_api.service.MENU_INDEX_EXECUTOR.submit"
+        ):
+            job = asyncio.run(
+                create_menu_refresh_job(
+                    "empty-fast-scan",
+                    restaurant_name="Empty Fast Scan",
+                    website_url="https://example.com/menu",
+                )
+            )
+
+        self.assertEqual(job.status, "running")
+        self.assertEqual(job.item_count, 0)
+        self.assertIn("scan is running", job.message.lower())
+
     def test_menu_refresh_queues_squarespace_image_job_when_azure_is_configured(self) -> None:
         menu_html = "".join(
             f'<img data-image="https://images.example/Forever+Thai+Menu+May+2026_Page_{page}.jpg">'

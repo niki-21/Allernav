@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -202,6 +203,18 @@ THIRD_PARTY_MENU_HOSTS = (
     "zmenu.com",
 )
 
+LOGGER = logging.getLogger(__name__)
+SENSITIVE_ENV_NAMES = (
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_SEARCH_API_KEY",
+    "APIFY_TOKEN",
+    "GOOGLE_SEARCH_API_KEY",
+    "SERPAPI_API_KEY",
+    "LANGSMITH_API_KEY",
+)
+
 
 def default_db_path() -> Path:
     configured = os.getenv("ALLERNAV_MENU_DB")
@@ -228,6 +241,53 @@ def menu_fetch_timeout_seconds() -> float:
 
 def remaining_seconds(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
+
+
+def sanitize_source_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed_url = parse.urlsplit(value)
+        hostname = parsed_url.hostname or ""
+        if not hostname:
+            return None
+        try:
+            port = parsed_url.port
+        except ValueError:
+            port = None
+        netloc = f"{hostname}:{port}" if port else hostname
+        return parse.urlunsplit((parsed_url.scheme, netloc, parsed_url.path, "", ""))[:500]
+    except ValueError:
+        return None
+
+
+def sanitize_log_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return " ".join(value.split())[:200]
+
+
+def sanitize_ingestion_exception(exc: BaseException) -> str:
+    message = " ".join((str(exc) or "No error detail was provided.").split())
+    for env_name in SENSITIVE_ENV_NAMES:
+        secret = os.getenv(env_name, "")
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    message = re.sub(
+        r"(?i)([\"']?\b(?:api[_-]?key|token|secret|password|authorization)[\"']?\s*[:=]\s*[\"']?)([^\"',;\s}]+)",
+        r"\1[redacted]",
+        message,
+    )
+    message = re.sub(
+        r"https?://[^\s]+",
+        lambda match: sanitize_source_url(match.group(0)) or "[redacted-url]",
+        message,
+    )
+    return f"{type(exc).__name__}: {message}"[:500]
+
+
+def log_menu_event(event: str, **fields: object) -> None:
+    LOGGER.info("%s %s", event, json.dumps(fields, ensure_ascii=True, sort_keys=True, default=str))
 
 
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
@@ -406,6 +466,83 @@ def ingest_menu_from_website(
     fast_only: bool = False,
     deep_scan: bool = False,
 ) -> MenuSource:
+    active_trace = trace if trace is not None else []
+    log_menu_event(
+        "menu_ingestion_started",
+        restaurant_name=sanitize_log_text(restaurant_name),
+        website_url=sanitize_source_url(website_url),
+        fast_only=fast_only,
+        deep_scan=deep_scan,
+    )
+    try:
+        source = _ingest_menu_from_website(
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant_name,
+            website_url=website_url,
+            restaurant_address=restaurant_address,
+            fetch_html=fetch_html,
+            extract_document=extract_document,
+            extract_bytes=extract_bytes,
+            db_path=db_path,
+            trace=active_trace,
+            fast_only=fast_only,
+            deep_scan=deep_scan,
+        )
+    except Exception as exc:
+        detail = sanitize_ingestion_exception(exc)
+        append_trace_step(
+            active_trace,
+            step_id="menu_ingestion_error",
+            label="Run menu discovery",
+            status="failed",
+            detail=detail,
+            provider="fastapi",
+            source_url=sanitize_source_url(website_url),
+        )
+        log_menu_event(
+            "menu_ingestion_failed",
+            restaurant_name=sanitize_log_text(restaurant_name),
+            website_url=sanitize_source_url(website_url),
+            fast_only=fast_only,
+            deep_scan=deep_scan,
+            error=detail,
+            final_item_count=0,
+        )
+        raise
+
+    log_menu_event(
+        "menu_ingestion_finished",
+        restaurant_name=sanitize_log_text(restaurant_name),
+        website_url=sanitize_source_url(website_url),
+        fast_only=fast_only,
+        deep_scan=deep_scan,
+        rendered_scan_attempted=any(
+            step.id == "rendered_menu_scan_running" and step.status == "running" for step in active_trace
+        ),
+        ocr_attempted=any(
+            step.id in {"document_ocr", "screenshot_ocr_running", "screenshot_ocr_complete", "screenshot_ocr_failed"}
+            and step.status not in {"deferred", "skipped", "skipped_no_document"}
+            for step in active_trace
+        ),
+        final_item_count=menu_source_item_count(source),
+    )
+    return source
+
+
+def _ingest_menu_from_website(
+    *,
+    restaurant_id: str,
+    restaurant_name: str | None,
+    website_url: str,
+    restaurant_address: str | None = None,
+    fetch_html: FetchHtml | None = None,
+    extract_document: ExtractDocument | None = None,
+    extract_bytes: ExtractBytes | None = None,
+    db_path: Path | None = None,
+    trace: list[IngestionTraceStep] | None = None,
+    fast_only: bool = False,
+    deep_scan: bool = False,
+) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
     document_client = AzureDocumentIntelligenceClient()
     document_extractor = extract_document or document_client.extract_from_url
@@ -455,6 +592,16 @@ def ingest_menu_from_website(
     )
     static_item_count = menu_source_item_count(last_source)
     document_candidates = [url for url in static_candidate_urls if looks_like_document_url(url)]
+    log_menu_event(
+        "menu_ingestion_candidates",
+        restaurant_name=sanitize_log_text(restaurant_name),
+        website_url=sanitize_source_url(website_url),
+        fast_only=fast_only,
+        deep_scan=deep_scan,
+        static_candidate_count=len(static_candidate_urls),
+        document_candidate_count=len(document_candidates),
+        ocr_attempted=bool(document_candidates and not fast_only),
+    )
     append_trace_step(
         trace,
         step_id="static_extraction",
@@ -612,6 +759,14 @@ def ingest_menu_from_website(
         key=candidate_url_priority,
     )
     should_render = fetch_html is None and rendered_budget >= 3.0
+    log_menu_event(
+        "menu_ingestion_rendered_scan",
+        restaurant_name=sanitize_log_text(restaurant_name),
+        website_url=sanitize_source_url(website_url),
+        rendered_scan_attempted=should_render,
+        fast_only=fast_only,
+        deep_scan=deep_scan,
+    )
     append_trace_step(
         trace,
         step_id="rendered_menu_scan_running",
