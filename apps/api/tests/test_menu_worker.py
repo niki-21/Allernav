@@ -135,7 +135,7 @@ class MenuWorkerTests(unittest.TestCase):
         existing = MenuRefreshJob(
             id=message.job_id,
             place_id=message.place_id,
-            status="deep_scanning",
+            status="running",
             message="Menu found; deeper scan is running.",
             item_count=1,
             indexing_status="pending",

@@ -168,7 +168,6 @@ export interface MenuRefreshJob {
     | "discovering"
     | "ocr_processing"
     | "normalizing"
-    | "deep_scanning"
     | "indexing"
     | "complete"
     | "failed"

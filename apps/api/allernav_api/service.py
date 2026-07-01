@@ -316,7 +316,7 @@ async def create_menu_refresh_job(
         job = MenuRefreshJob(
             id=str(uuid4()),
             place_id=place_id,
-            status="deep_scanning" if fast_item_count else "queued",
+            status="running" if fast_item_count else "queued",
             message=(
                 "Menu found; deeper scan is running."
                 if fast_item_count
@@ -568,7 +568,7 @@ def _create_local_menu_refresh_job(
     job = MenuRefreshJob(
         id=str(uuid4()),
         place_id=place_id,
-        status="deep_scanning",
+        status="running",
         message="Menu found; deeper scan is running." if item_count else "Deeper menu scan is running.",
         item_count=item_count,
         source_url=source.source_url,

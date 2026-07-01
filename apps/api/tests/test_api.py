@@ -441,7 +441,7 @@ class ApiTests(unittest.TestCase):
             os.environ.pop("ALLERNAV_MENU_DB", None)
 
         self.assertEqual(refresh.status_code, 202)
-        self.assertEqual(refresh.json()["status"], "deep_scanning")
+        self.assertEqual(refresh.json()["status"], "running")
         self.assertEqual(refresh.json()["indexing_status"], "pending")
         self.assertEqual(refresh.json()["trace"][0]["id"], "source_discovery")
         trace_by_id = {step["id"]: step for step in refresh.json()["trace"]}
@@ -506,7 +506,7 @@ class ApiTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(job.status, "deep_scanning")
+        self.assertEqual(job.status, "running")
         self.assertTrue(ingest.call_args.kwargs["fast_only"])
 
     def test_menu_refresh_queues_squarespace_image_job_when_azure_is_configured(self) -> None:
@@ -799,10 +799,46 @@ class ApiTests(unittest.TestCase):
             response = asyncio.run(suggest_nearby_places_service(payload))
 
         self.assertEqual(create_job.await_count, 2)
+        self.assertTrue(all(call.kwargs["allow_local_fallback"] for call in create_job.await_args_list))
         self.assertEqual(sum(item.evidence_status == "scan_running" for item in response.places), 2)
         self.assertEqual(sum(item.evidence_status == "scan_needed" for item in response.places), 1)
         self.assertEqual(response.scan_job_ids, ["job-0", "job-1"])
         self.assertIn("I started menu scans for Place 0 and Place 1.", response.answer)
+
+    def test_nearby_rag_marks_one_failed_background_scan_without_failing_request(self) -> None:
+        candidates = [
+            PlaceListItem(
+                id=f"place-{index}",
+                name=f"Place {index}",
+                location=LatLng(lat=40 + index / 100, lng=-73),
+                website_url=f"https://place-{index}.example",
+            )
+            for index in range(2)
+        ]
+        payload = NearbySuggestionRequest(
+            candidate_places=candidates,
+            allergens=[AllergyTag.SESAME],
+            allow_background_scan=True,
+        )
+        successful_job = MenuRefreshJob(
+            id="job-1",
+            place_id="place-1",
+            status="running",
+            message="Menu found; deeper scan is running.",
+            created_at="2026-06-30T00:00:00Z",
+        )
+
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
+            "allernav_api.service.create_menu_refresh_job",
+            new=AsyncMock(side_effect=[RuntimeError("durable persistence unavailable"), successful_job]),
+        ):
+            response = asyncio.run(suggest_nearby_places_service(payload))
+
+        by_id = {item.place.id: item for item in response.places}
+        self.assertEqual(by_id["place-0"].evidence_status, "scan_failed")
+        self.assertIsNone(by_id["place-0"].scan_job_id)
+        self.assertEqual(by_id["place-1"].evidence_status, "scan_running")
+        self.assertEqual(response.scan_job_ids, ["job-1"])
 
     def test_nearby_rag_without_allergens_uses_general_discovery_ranking(self) -> None:
         center = LatLng(lat=40.0, lng=-73.0)

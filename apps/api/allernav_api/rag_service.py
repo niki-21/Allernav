@@ -297,16 +297,20 @@ async def start_background_scans(
 
     from .service import create_menu_refresh_job
 
-    jobs = await asyncio.gather(
-        *(
-            create_menu_refresh_job(
+    async def start_scan(suggestion: NearbyPlaceSuggestion) -> Any:
+        try:
+            return await create_menu_refresh_job(
                 suggestion.place.id,
                 restaurant_name=suggestion.place.name,
                 website_url=suggestion.place.website_url,
-                allow_local_fallback=False,
+                allow_local_fallback=True,
             )
-            for suggestion in eligible
-        )
+        except Exception as exc:  # Keep one provider failure from failing the whole nearby request.
+            return exc
+
+    jobs = await asyncio.gather(
+        *(start_scan(suggestion) for suggestion in eligible),
+        return_exceptions=True,
     )
     updates = {suggestion.place.id: job for suggestion, job in zip(eligible, jobs, strict=True)}
     return [apply_scan_job(suggestion, updates.get(suggestion.place.id)) for suggestion in suggestions]
@@ -315,6 +319,16 @@ async def start_background_scans(
 def apply_scan_job(suggestion: NearbyPlaceSuggestion, job: Any | None) -> NearbyPlaceSuggestion:
     if job is None:
         return suggestion
+    if isinstance(job, BaseException):
+        return suggestion.model_copy(
+            update={
+                "evidence_status": "scan_failed",
+                "scan_job_id": None,
+                "reason": "The background menu scan could not be started.",
+                "risk_note": "The background menu scan could not be started.",
+                "next_action": "Open the restaurant and retry its menu scan.",
+            }
+        )
     if job.status == "failed":
         return suggestion.model_copy(
             update={

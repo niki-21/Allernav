@@ -320,7 +320,7 @@ export default function TrustPanel({
   const refreshFailed = menuRefreshJob?.status === "failed";
   const refreshPending =
     isMenuLoading ||
-    ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "deep_scanning", "needs_background_refresh"].includes(
+    ["queued", "running", "discovering", "ocr_processing", "normalizing", "indexing", "needs_background_refresh"].includes(
       menuRefreshJob?.status ?? "",
     );
   const menuLifecycleLabel =
