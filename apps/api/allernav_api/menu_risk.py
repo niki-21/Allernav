@@ -19,7 +19,30 @@ PREPARATION_RISK_TERMS = (
     "shared",
     "aioli",
     "pesto",
+    "gravy",
+    "shared prep",
+    "shared preparation",
 )
+
+MENU_ALLERGEN_ALIASES: dict[AllergyTag, tuple[str, ...]] = {
+    AllergyTag.FISH: ("seafood", "tilapia", "trout", "haddock", "snapper", "mahi"),
+    AllergyTag.SHELLFISH: ("seafood", "clam", "mussel", "oyster", "crawfish", "crayfish"),
+}
+
+VAGUE_ITEM_NAMES = {
+    "special",
+    "house special",
+    "chef special",
+    "combo",
+    "combination",
+    "lunch",
+    "dinner",
+    "entrees",
+    "mains",
+    "appetizers",
+    "sides",
+    "menu",
+}
 
 
 def classify_menu_item(
@@ -28,6 +51,16 @@ def classify_menu_item(
     *,
     source_confidence: float | None = None,
 ) -> MenuItem:
+    if not selected_allergens:
+        return item.model_copy(
+            update={
+                "risk_label": None,
+                "matched_allergens": [],
+                "risk_reasons": [],
+                "verification_question": None,
+            }
+        )
+
     name = item.name.strip()
     description = (item.description or "").strip()
     text = f"{name} {description}".strip().lower()
@@ -38,6 +71,7 @@ def classify_menu_item(
             if allergen in item.confirmed_allergens
             or allergen in item.inferred_risks
             or any(term_matches(text, term) for term in ALLERGEN_TERMS[allergen])
+            or any(term_matches(text, term) for term in MENU_ALLERGEN_ALIASES.get(allergen, ()))
         },
         key=lambda allergen: allergen.value,
     )
@@ -75,7 +109,21 @@ def classify_menu_item(
         )
 
     description_words = [word for word in description.split() if any(character.isalpha() for character in word)]
-    if len(description_words) < 3 or len(description) < 12:
+    normalized_name = " ".join(name.lower().split())
+    raw_name_parts = normalized_name.split()
+    name_words = [word for word in normalized_name.split() if any(character.isalpha() for character in word)]
+    vague_name = (
+        normalized_name in VAGUE_ITEM_NAMES
+        or normalized_name.startswith("choose ")
+        or normalized_name.endswith(" options")
+        or (len(name_words) <= 1 and normalized_name in {"dish", "item", "plate"})
+        or (
+            len(raw_name_parts) == 2
+            and raw_name_parts[0] in {"dish", "item", "plate"}
+            and raw_name_parts[1].isdigit()
+        )
+    )
+    if vague_name:
         return item.model_copy(
             update={
                 "risk_label": "insufficient_info",
@@ -87,15 +135,16 @@ def classify_menu_item(
         )
 
     context_score = min(0.14, len(description_words) * 0.012)
+    name_context = min(0.08, len(name_words) * 0.02)
     return item.model_copy(
         update={
             "risk_label": "possible_lower_risk",
             "matched_allergens": [],
-            "risk_reasons": ["No selected allergen terms were found in the available ingredient description."],
+            "risk_reasons": ["No selected allergen terms were found in the available menu text."],
             "verification_question": (
                 f"Can you verify that {name} contains no {selected_text} and is prepared without shared-contact risk?"
             ),
-            "confidence": round(min(0.9, max(0.62, source_quality - 0.02 + context_score)), 2),
+            "confidence": round(min(0.9, max(0.56, source_quality - 0.08 + context_score + name_context)), 2),
         }
     )
 

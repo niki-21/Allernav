@@ -88,7 +88,7 @@ async def get_place_details_service(
     allergens: list[AllergyTag],
     client: GooglePlacesClient,
 ) -> PlaceDetailsResponse:
-    selected_allergens = allergens or [AllergyTag.PEANUT]
+    selected_allergens = list(allergens)
     place = client.get_place_details(place_id)
     google_review_count = len(place.get("reviews", []))
     apify_reviews = load_cached_reviews(place["id"])
@@ -100,8 +100,8 @@ async def get_place_details_service(
     summary, evidence, explanation = analyze_place(place, selected_allergens)
     menu_source = load_menu_source(place["id"])
     menu = load_place_menu(place["id"]) if menu_source else None
-    restaurant_fit = score_restaurant_menu(menu_source, selected_allergens)
-    if menu:
+    restaurant_fit = score_restaurant_menu(menu_source, selected_allergens) if selected_allergens else None
+    if menu and restaurant_fit:
         menu = menu.model_copy(update=restaurant_fit_menu_fields(restaurant_fit))
     if not summary.fit_score:
         summary.fit_score = summary.score
@@ -109,20 +109,23 @@ async def get_place_details_service(
         summary.fit_verdict = summary.verdict
     if not summary.evidence_confidence:
         summary.evidence_confidence = summary.confidence
-    summary.meaningful_evidence = summary.evidence_count > 0
-    summary.evidence_status = "meaningful" if summary.meaningful_evidence else "limited"
-    summary.evidence_summary = "Allergy-specific evidence found" if summary.meaningful_evidence else "Not enough allergy-specific evidence"
-    agent_recommendation = run_dining_safety_graph(
-        profile=AllergyProfile(allergens=selected_allergens),
-        restaurant_id=place["id"],
-        restaurant_name=place["name"],
-        context=RestaurantContext(
+    if selected_allergens:
+        summary.meaningful_evidence = summary.evidence_count > 0
+        summary.evidence_status = "meaningful" if summary.meaningful_evidence else "limited"
+        summary.evidence_summary = "Allergy-specific evidence found" if summary.meaningful_evidence else "Not enough allergy-specific evidence"
+        agent_recommendation = run_dining_safety_graph(
+            profile=AllergyProfile(allergens=selected_allergens),
             restaurant_id=place["id"],
             restaurant_name=place["name"],
-            website_url=place.get("website_uri") if menu_source else None,
-            menu_sources=[menu_source] if menu_source else [],
-        ),
-    )
+            context=RestaurantContext(
+                restaurant_id=place["id"],
+                restaurant_name=place["name"],
+                website_url=place.get("website_uri") if menu_source else None,
+                menu_sources=[menu_source] if menu_source else [],
+            ),
+        )
+    else:
+        agent_recommendation = None
 
     return PlaceDetailsResponse(
         id=place["id"],
@@ -149,8 +152,8 @@ async def get_place_details_service(
         google_review_uri=f"https://search.google.com/local/writereview?placeid={place['id']}",
         selected_allergens=selected_allergens,
         score_summary=summary,
-        restaurant_fit_score=restaurant_fit.score,
-        restaurant_fit_label=restaurant_fit.label,
+        restaurant_fit_score=restaurant_fit.score if restaurant_fit else None,
+        restaurant_fit_label=restaurant_fit.label if restaurant_fit else None,
         evidence=evidence,
         review_snippets=[
             {
@@ -186,6 +189,8 @@ async def get_place_details_service(
 async def get_place_menu_service(place_id: str, allergens: list[AllergyTag] | None = None) -> PlaceMenu:
     selected_allergens = allergens or []
     menu = classify_place_menu(load_place_menu(place_id), selected_allergens)
+    if not selected_allergens:
+        return menu
     fit = score_restaurant_menu(load_menu_source(place_id), selected_allergens)
     return menu.model_copy(update=restaurant_fit_menu_fields(fit))
 

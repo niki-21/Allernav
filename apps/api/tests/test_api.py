@@ -280,6 +280,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(dumped["places"][0]["id"], "alpha")
         self.assertEqual(dumped["allergens"], ["peanut"])
 
+    def test_search_works_without_selected_allergens(self) -> None:
+        response = asyncio.run(
+            search_places_service(
+                SearchRequest(query="restaurants", center=LatLng(lat=38.9, lng=-77.0), allergens=[]),
+                client=FakePlacesClient(),
+            )
+        )
+        self.assertEqual(response.allergens, [])
+        self.assertEqual(response.places[0].id, "alpha")
+
     def test_place_details_response_shape(self) -> None:
         with patch("allernav_api.service.load_cached_reviews", return_value=[]):
             response = asyncio.run(
@@ -298,6 +308,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(dumped["restaurant_fit_label"], "Scan needed")
         self.assertGreaterEqual(len(dumped["evidence"]), 1)
         self.assertIn("explanation", dumped)
+
+    def test_place_details_without_allergens_uses_general_signals(self) -> None:
+        with patch("allernav_api.service.load_cached_reviews", return_value=[]):
+            response = asyncio.run(get_place_details_service("alpha", allergens=[], client=FakePlacesClient()))
+
+        self.assertEqual(response.selected_allergens, [])
+        self.assertIsNone(response.restaurant_fit_score)
+        self.assertIsNone(response.restaurant_fit_label)
+        self.assertIsNone(response.agent_recommendation)
+        self.assertEqual(response.score_summary.evidence_status, "general")
+        self.assertIn("No allergies selected", response.explanation)
 
     def test_place_details_uses_cached_apify_reviews_when_available(self) -> None:
         with patch(
@@ -409,7 +430,7 @@ class ApiTests(unittest.TestCase):
                     "/api/places/alpha/menu-refresh",
                     params={"restaurant_name": "Alpha", "website_url": "https://example.com/menu"},
                 )
-                menu = client.get("/api/places/alpha/menu")
+                menu = client.get("/api/places/alpha/menu", params=[("allergens", "peanut")])
 
             os.environ.pop("ALLERNAV_MENU_DB", None)
 
@@ -701,6 +722,7 @@ class ApiTests(unittest.TestCase):
             candidate_places=candidates,
             max_places=8,
             allow_background_scan=False,
+            allergens=[AllergyTag.PEANUT],
         )
         with patch("allernav_api.rag_service.load_menu_source", return_value=None), patch(
             "allernav_api.service.create_menu_refresh_job", new=AsyncMock()
@@ -775,6 +797,48 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(sum(item.evidence_status == "scan_needed" for item in response.places), 1)
         self.assertEqual(response.scan_job_ids, ["job-0", "job-1"])
         self.assertIn("I started menu scans for Place 0 and Place 1.", response.answer)
+
+    def test_nearby_rag_without_allergens_uses_general_discovery_ranking(self) -> None:
+        center = LatLng(lat=40.0, lng=-73.0)
+        candidates = [
+            PlaceListItem(
+                id="popular",
+                name="Popular Cafe",
+                location=LatLng(lat=40.001, lng=-73.0),
+                rating=4.8,
+                user_rating_count=1200,
+                primary_type="restaurant",
+            ),
+            PlaceListItem(
+                id="quiet",
+                name="Quiet Cafe",
+                location=LatLng(lat=40.02, lng=-73.0),
+                rating=4.0,
+                user_rating_count=20,
+                primary_type="cafe",
+            ),
+        ]
+        with patch("allernav_api.rag_service.load_menu_source", return_value=None):
+            response = asyncio.run(
+                suggest_nearby_places_service(
+                    NearbySuggestionRequest(
+                        question="Suggest nearby places",
+                        center=center,
+                        allergens=[],
+                        candidate_places=candidates,
+                    )
+                )
+            )
+
+        self.assertEqual(response.ranking_mode, "general_discovery")
+        self.assertEqual(response.places[0].place.id, "popular")
+        self.assertIsNone(response.places[0].restaurant_fit_score)
+        self.assertGreater(response.places[0].general_match_score, response.places[1].general_match_score)
+        self.assertEqual(response.scan_needed_places, [])
+        self.assertEqual(
+            response.answer,
+            "No allergies selected. I found 2 nearby restaurants and ranked them by rating, popularity, and distance.",
+        )
 
 if __name__ == "__main__":
     unittest.main()

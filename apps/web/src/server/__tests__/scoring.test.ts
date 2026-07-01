@@ -3,6 +3,17 @@ import test from "node:test";
 
 import { analyzePlace } from "../scoring.ts";
 
+test("no-allergy analysis uses general restaurant signals", () => {
+  const { summary, evidence, explanation } = analyzePlace(
+    { rating: 4.7, reviews: [] },
+    [],
+  );
+  assert.equal(summary.evidence_status, "general");
+  assert.equal(summary.fit_score, 94);
+  assert.equal(evidence.length, 0);
+  assert.match(explanation, /No allergies selected/);
+});
+
 test("direct allergen accommodation scores well", () => {
   const { summary, evidence } = analyzePlace(
     {

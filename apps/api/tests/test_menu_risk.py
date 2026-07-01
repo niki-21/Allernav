@@ -51,3 +51,28 @@ def test_vague_item_is_insufficient_info() -> None:
 def test_unknown_curry_requires_staff_check() -> None:
     result = classify_menu_item(MenuItem(name="House Curry"), [AllergyTag.PEANUT])
     assert result.risk_label == "needs_check"
+
+
+def test_seafood_salad_is_avoid_for_fish() -> None:
+    result = classify_menu_item(MenuItem(name="Seafood Salad"), [AllergyTag.FISH])
+    assert result.risk_label == "avoid"
+    assert result.matched_allergens == [AllergyTag.FISH]
+
+
+def test_pasta_with_tomato_sauce_is_not_insufficient_info() -> None:
+    result = classify_menu_item(
+        MenuItem(name="Pasta with Tomato Sauce"),
+        [AllergyTag.PEANUT, AllergyTag.SESAME, AllergyTag.FISH],
+    )
+    assert result.risk_label == "needs_check"
+
+
+def test_simple_named_dish_is_possible_lower_risk() -> None:
+    result = classify_menu_item(MenuItem(name="Plain Basmati Rice"), [AllergyTag.PEANUT, AllergyTag.FISH])
+    assert result.risk_label == "possible_lower_risk"
+
+
+def test_no_allergy_mode_does_not_add_risk_labels() -> None:
+    result = classify_menu_item(MenuItem(name="Seafood Salad"), [])
+    assert result.risk_label is None
+    assert result.matched_allergens == []

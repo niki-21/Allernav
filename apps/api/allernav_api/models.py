@@ -373,6 +373,8 @@ class NearbyPlaceSuggestion(BaseModel):
     scan_priority_rank: int | None = Field(default=None, ge=1)
     scan_priority_score: float | None = Field(default=None, ge=0, le=100)
     restaurant_fit_score: int | None = Field(default=None, ge=0, le=100)
+    general_match_score: float | None = Field(default=None, ge=0, le=100)
+    general_match_label: str | None = None
     restaurant_fit_label: Literal[
         "Better candidate, still verify",
         "Good candidate to ask about",
@@ -397,6 +399,7 @@ class NearbyPlaceSuggestion(BaseModel):
 class NearbySuggestionResponse(BaseModel):
     answer: str
     retrieval_mode: str = "hybrid"
+    ranking_mode: Literal["allergy_fit", "general_discovery"] = "allergy_fit"
     places: list[NearbyPlaceSuggestion] = Field(default_factory=list)
     evidence: list[HybridSearchResult] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)

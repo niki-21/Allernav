@@ -50,6 +50,9 @@ function nearbyEvidenceStatus(status: string): string {
 }
 
 function nearbyRetrievalLabel(mode: string): string {
+  if (mode === "general_discovery") {
+    return "General restaurant ranking";
+  }
   return mode === "scanned_menu_evidence_needed" ? "Scanned menu evidence needed" : "Scanned menu comparison";
 }
 
@@ -75,6 +78,9 @@ function hasScannedMenuEvidence(suggestion: NearbySuggestionResponse["places"][n
 }
 
 function nearbyAnswerSummary(answer: NearbySuggestionResponse): string {
+  if (answer.ranking_mode === "general_discovery") {
+    return answer.answer;
+  }
   const runningCount = answer.places.filter((suggestion) => suggestion.evidence_status === "scan_running").length;
   if (runningCount > 0) {
     return `Scanning menus for ${runningCount} restaurant${runningCount === 1 ? "" : "s"}…`;
@@ -294,7 +300,7 @@ export default function Home() {
 
     try {
       const parsed = JSON.parse(raw) as AllergyTag[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         setSelectedAllergens(parsed);
       }
     } catch {
@@ -478,6 +484,10 @@ export default function Home() {
       return;
     }
 
+    if (selectedAllergens.length === 0) {
+      return;
+    }
+
     const agentKey = `${details.id}:${selectedAllergenKey}:${menuItemCount}`;
     if (details.agent_recommendation || agentAnalysisAttempts.current.has(agentKey)) {
       return;
@@ -518,7 +528,7 @@ export default function Home() {
     resetNearbyRag();
     setSelectedAllergens((current) => {
       if (current.includes(allergen)) {
-        return current.length === 1 ? current : current.filter((value) => value !== allergen);
+        return current.filter((value) => value !== allergen);
       }
       return [...current, allergen];
     });
@@ -584,14 +594,18 @@ export default function Home() {
     if (!question) {
       return;
     }
-    if (!areaSearchCompleted || canSearchArea || rankedPlaces.length === 0) {
-      resetNearbyRag();
-      setNearbyAskState("error");
-      setNearbyAskError("Search this area first.");
-      return;
+    let visiblePlaces = rankedPlaces;
+    if (!areaSearchCompleted || canSearchArea || visiblePlaces.length === 0) {
+      visiblePlaces = await runSearch(query.trim() || "restaurants", mapCenter, selectedAllergens);
+      if (visiblePlaces.length === 0) {
+        setNearbyAskState("error");
+        setNearbyAskError("No restaurants were found in this area. Try moving the map or changing the search.");
+        return;
+      }
+      // The search intentionally establishes the new RAG context; the next render should not cancel it.
+      nearbyContextRef.current = null;
     }
     const requestId = ++nearbyRequestSequence.current;
-    const requestContext = nearbyContextKey;
     setNearbyAskState("loading");
     setNearbyAskError(null);
     if (allowBackgroundScan) {
@@ -613,7 +627,7 @@ export default function Home() {
       });
     }
     try {
-      const candidatePlaces = rankedPlaces.slice(0, 8).map((place) => {
+      const candidatePlaces = visiblePlaces.slice(0, 8).map((place) => {
         const detailState = detailStates[place.id];
         return {
           ...place,
@@ -628,7 +642,7 @@ export default function Home() {
         candidatePlaces,
         allowBackgroundScan,
       );
-      if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+      if (requestId !== nearbyRequestSequence.current) {
         return;
       }
       setNearbyAnswer(response);
@@ -641,7 +655,7 @@ export default function Home() {
           const loadedMenuIds = new Set<string>();
           for (let attempt = 0; attempt < 90; attempt += 1) {
             await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-            if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+            if (requestId !== nearbyRequestSequence.current) {
               return;
             }
             const jobs = (
@@ -655,7 +669,7 @@ export default function Home() {
                 }),
               )
             ).filter((job): job is MenuRefreshJob => job !== null);
-            if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+            if (requestId !== nearbyRequestSequence.current) {
               return;
             }
             setMenuRefreshJobs((current) => ({
@@ -677,7 +691,7 @@ export default function Home() {
                   return { job, details: { ...details, menu: menu ?? details.menu } };
                 }),
               );
-              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+              if (requestId !== nearbyRequestSequence.current) {
                 return;
               }
               setDetailStates((current) => {
@@ -696,7 +710,7 @@ export default function Home() {
                 candidatePlaces,
                 false,
               );
-              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+              if (requestId !== nearbyRequestSequence.current) {
                 return;
               }
               const stillRunning = new globalThis.Map(
@@ -727,7 +741,7 @@ export default function Home() {
                 candidatePlaces,
                 false,
               );
-              if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+              if (requestId !== nearbyRequestSequence.current) {
                 return;
               }
               setNearbyAnswer(reranked);
@@ -737,7 +751,7 @@ export default function Home() {
         })();
       }
     } catch (error) {
-      if (requestId !== nearbyRequestSequence.current || requestContext !== nearbyContextRef.current) {
+      if (requestId !== nearbyRequestSequence.current) {
         return;
       }
       if (allowBackgroundScan) {
@@ -758,7 +772,7 @@ export default function Home() {
       setNearbyAskError(nearbyRagErrorMessage(error));
       return;
     }
-    if (requestId === nearbyRequestSequence.current && requestContext === nearbyContextRef.current) {
+    if (requestId === nearbyRequestSequence.current) {
       setNearbyAskState("idle");
     }
   };
@@ -817,7 +831,7 @@ export default function Home() {
           <details className="drawer-filter" open>
             <summary>
               <span>Allergies</span>
-              <strong>{selectedAllergenSummary || "None selected"}</strong>
+              <strong>{selectedAllergenSummary || "No allergies selected"}</strong>
             </summary>
             <AllergyProfilePicker selectedAllergens={selectedAllergens} onToggle={toggleAllergen} />
           </details>
@@ -829,8 +843,10 @@ export default function Home() {
                 <strong>Ask AllerNav</strong>
               </div>
               <small>
-                {!areaSearchCompleted || canSearchArea || rankedPlaces.length === 0
-                  ? "Search this area first"
+                {isSearching
+                  ? "Searching area…"
+                  : !areaSearchCompleted || canSearchArea || rankedPlaces.length === 0
+                    ? "Ready to search this area"
                   : `${Math.min(8, rankedPlaces.length)} search-area candidate${rankedPlaces.length === 1 ? "" : "s"}`}
               </small>
             </div>
@@ -847,8 +863,8 @@ export default function Home() {
                 rows={2}
                 aria-label="Ask AllerNav for nearby restaurant suggestions"
               />
-              <button type="submit" disabled={nearbyAskState === "loading"}>
-                {nearbyAskState === "loading" ? "Checking..." : "Ask"}
+              <button type="submit" disabled={nearbyAskState === "loading" || isSearching}>
+                {isSearching ? "Searching..." : nearbyAskState === "loading" ? "Checking..." : "Ask"}
               </button>
             </form>
             {nearbyAskError && <p className="panel-error">{nearbyAskError}</p>}
@@ -858,7 +874,8 @@ export default function Home() {
                 {nearbyAnswer.places.length > 0 && (
                   <div className="nearby-rag-suggestions">
                     {nearbyAnswer.places.slice(0, 3).map((suggestion) => {
-                      const showScore = hasScannedMenuEvidence(suggestion);
+                      const generalMode = nearbyAnswer.ranking_mode === "general_discovery";
+                      const showScore = !generalMode && hasScannedMenuEvidence(suggestion);
                       const scoreTone = showScore
                         ? suggestion.restaurant_fit_score! >= 70
                           ? "good"
@@ -878,18 +895,28 @@ export default function Home() {
                             {showScore && (
                               <b className={`nearby-score-badge ${scoreTone}`}>{suggestion.restaurant_fit_score}</b>
                             )}
+                            {generalMode && suggestion.place.rating != null && (
+                              <b className="nearby-rating-badge">{suggestion.place.rating.toFixed(1)}★</b>
+                            )}
                           </span>
                           <span className="nearby-rag-card-meta">
-                            <b>{showScore ? suggestion.restaurant_fit_label : nearbyEvidenceStatus(suggestion.evidence_status)}</b>
+                            <b>
+                              {generalMode
+                                ? suggestion.general_match_label ?? "Nearby restaurant option"
+                                : showScore
+                                  ? suggestion.restaurant_fit_label
+                                  : nearbyEvidenceStatus(suggestion.evidence_status)}
+                            </b>
                           </span>
                           {showScore && <small>{nearbyBucketSummary(suggestion)}</small>}
                           {showScore && <small className="nearby-rag-next">Next: {suggestion.next_action}</small>}
+                          {generalMode && <small>{suggestion.reason}</small>}
                         </button>
                       );
                     })}
                   </div>
                 )}
-                {nearbyAnswer.scan_needed_places.length > 0 &&
+                {nearbyAnswer.ranking_mode === "allergy_fit" && nearbyAnswer.scan_needed_places.length > 0 &&
                   !nearbyAnswer.places.some((suggestion) => suggestion.evidence_status === "scan_running") && (
                   <button
                     type="button"

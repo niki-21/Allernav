@@ -13,7 +13,7 @@ export type ProfileSensitivity = "watchful" | "careful" | "strict";
 export type DiningMode = "grab_go" | "sit_down" | "late_night" | "study_break";
 export type Verdict = "good_fit" | "use_caution" | "high_risk";
 export type ImpactDirection = "positive" | "negative";
-export type EvidenceStatus = "meaningful" | "limited";
+export type EvidenceStatus = "meaningful" | "limited" | "general";
 export type EvidenceTone = "reassuring" | "risk_note";
 export type AgentRiskLevel = "low" | "medium" | "high" | "insufficient_evidence";
 export type AgentRecommendedAction = "verify" | "avoid" | "ask_staff" | "insufficient_evidence";
@@ -141,6 +141,8 @@ export interface PlaceMenu {
   page_count?: number | null;
   extraction_confidence?: number | null;
   restaurant_fit_score?: number | null;
+  general_match_score?: number | null;
+  general_match_label?: string | null;
   restaurant_fit_label?: string | null;
   avoid_count?: number;
   needs_check_count?: number;
@@ -366,6 +368,7 @@ export interface NearbyPlaceSuggestion {
 export interface NearbySuggestionResponse {
   answer: string;
   retrieval_mode: string;
+  ranking_mode: "allergy_fit" | "general_discovery";
   places: NearbyPlaceSuggestion[];
   evidence: HybridSearchResult[];
   missing_information: string[];

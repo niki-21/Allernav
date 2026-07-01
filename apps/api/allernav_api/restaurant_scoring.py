@@ -24,6 +24,19 @@ def score_restaurant_menu(
     source: MenuSource | None,
     selected_allergens: list[AllergyTag],
 ) -> RestaurantFitScore:
+    if not selected_allergens:
+        return RestaurantFitScore(
+            score=0,
+            label="Scan needed",
+            menu_item_count=sum(len(section.items) for section in source.sections) if source else 0,
+            avoid_count=0,
+            needs_check_count=0,
+            possible_lower_risk_count=0,
+            insufficient_info_count=0,
+            evidence_quality=source.reliability if source else 0,
+            reason="No allergies were selected, so allergy-fit scoring was not applied.",
+            next_action="Browse the menu and restaurant details.",
+        )
     if source is None:
         return RestaurantFitScore(
             score=20,
@@ -67,19 +80,21 @@ def score_restaurant_menu(
         "possible_lower_risk": sum(item.risk_label == "possible_lower_risk" for item in classified),
         "insufficient_info": sum(item.risk_label == "insufficient_info" for item in classified),
     }
-    described_ratio = sum(bool((item.description or "").strip()) for item in classified) / item_count
-    evidence_quality = min(1.0, max(0.0, source_confidence * 0.65 + described_ratio * 0.35))
+    grounded_ratio = sum(item.risk_label != "insufficient_info" for item in classified) / item_count
+    evidence_quality = min(1.0, max(0.0, source_confidence * 0.75 + grounded_ratio * 0.25))
     menu_coverage = min(1.0, item_count / 10)
     quality_and_coverage = min(1.0, evidence_quality * 0.7 + menu_coverage * 0.3)
     avoid_ratio = counts["avoid"] / item_count
-    uncertainty_ratio = (counts["needs_check"] + counts["insufficient_info"]) / item_count
+    needs_check_ratio = counts["needs_check"] / item_count
+    insufficient_ratio = counts["insufficient_info"] / item_count
     possible_ratio = counts["possible_lower_risk"] / item_count
     score = round(
         45
         + 35 * possible_ratio
         + 10 * quality_and_coverage
         - 20 * avoid_ratio
-        - 10 * uncertainty_ratio
+        - 6 * needs_check_ratio
+        - 8 * insufficient_ratio
     )
     score = max(0, min(100, score))
 

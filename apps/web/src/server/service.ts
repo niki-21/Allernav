@@ -254,7 +254,7 @@ export async function getPlaceDetailsService(
   allergens: AllergyTag[],
   client: PlacesClientLike = new GooglePlacesClient(),
 ): Promise<PlaceDetailsResponse> {
-  const selectedAllergens: AllergyTag[] = allergens.length > 0 ? allergens : ["peanut"];
+  const selectedAllergens: AllergyTag[] = allergens;
   const place = await client.getPlaceDetails(placeId);
   const localSnapshot = getLocalPlaceSnapshot(place.name);
   const googleReviewCount = place.reviews.length;
@@ -268,9 +268,20 @@ export async function getPlaceDetailsService(
   const prioritizedReviews = prioritizeReviewSnippets(mergedPlace.reviews, selectedAllergens, evidenceReviewIds);
   const storedMenu = await fetchBackendPlaceMenu(place.id, selectedAllergens);
   const menu = storedMenu ?? localSnapshot?.menu ?? null;
-  const recommendedItems = await recommendMenuItems(place.name, selectedAllergens, menu, evidence);
-  const scoreSummary = applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length);
-  const decisionBrief = buildDecisionBrief(scoreSummary, evidence, menu, recommendedItems);
+  const recommendedItems = selectedAllergens.length > 0
+    ? await recommendMenuItems(place.name, selectedAllergens, menu, evidence)
+    : [];
+  const scoreSummary = selectedAllergens.length > 0
+    ? applyMenuSignals(summary, menu, selectedAllergens, recommendedItems.length)
+    : summary;
+  const decisionBrief = selectedAllergens.length > 0
+    ? buildDecisionBrief(scoreSummary, evidence, menu, recommendedItems)
+    : {
+        headline: "Restaurant match",
+        summary: "No allergies selected, so this view uses general restaurant signals.",
+        recommended_action: "Review the menu, rating, and restaurant details.",
+        caution_flags: [],
+      };
 
   return {
     id: place.id,
@@ -295,8 +306,8 @@ export async function getPlaceDetailsService(
     google_review_uri: `https://search.google.com/local/writereview?placeid=${encodeURIComponent(place.id)}`,
     selected_allergens: selectedAllergens,
     score_summary: scoreSummary,
-    restaurant_fit_score: menu?.restaurant_fit_score ?? null,
-    restaurant_fit_label: menu?.restaurant_fit_label ?? null,
+    restaurant_fit_score: selectedAllergens.length > 0 ? menu?.restaurant_fit_score ?? null : null,
+    restaurant_fit_label: selectedAllergens.length > 0 ? menu?.restaurant_fit_label ?? null : null,
     evidence,
     review_snippets: prioritizedReviews
       .map((review) => ({

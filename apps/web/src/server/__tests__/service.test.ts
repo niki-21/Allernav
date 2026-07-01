@@ -58,6 +58,15 @@ test("searchPlacesService returns the expected response shape", async () => {
   assert.deepEqual(response.allergens, ["peanut"]);
 });
 
+test("searchPlacesService supports an empty allergy profile", async () => {
+  const response = await searchPlacesService(
+    { query: "restaurants", center: { lat: 38.9, lng: -77.0 }, allergens: [] },
+    fakeClient,
+  );
+  assert.deepEqual(response.allergens, []);
+  assert.equal(response.places[0]?.id, "alpha");
+});
+
 test("getPlaceDetailsService returns details, evidence, and explanation", async () => {
   const response = await getPlaceDetailsService("alpha", ["peanut"], fakeClient);
 
@@ -69,6 +78,16 @@ test("getPlaceDetailsService returns details, evidence, and explanation", async 
   assert.ok(response.decision_brief.headline.length > 0);
   assert.ok(response.decision_brief.caution_flags.length > 0);
   assert.match(response.google_review_uri, /writereview/);
+});
+
+test("getPlaceDetailsService keeps no-allergy mode separate", async () => {
+  const response = await getPlaceDetailsService("alpha", [], fakeClient);
+  assert.deepEqual(response.selected_allergens, []);
+  assert.equal(response.restaurant_fit_score, null);
+  assert.equal(response.restaurant_fit_label, null);
+  assert.equal(response.score_summary.evidence_status, "general");
+  assert.equal(response.decision_brief.headline, "Restaurant match");
+  assert.equal(response.evidence.length, 0);
 });
 
 test("getPlaceDetailsService stays cautious when reviews are missing", async () => {

@@ -210,6 +210,7 @@ export default function TrustPanel({
   const activeTab = tabState.placeId === data.id ? tabState.tab : "overview";
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
+  const allergyMode = data.selected_allergens.length > 0;
   const classifiedMenuItems = menuSections.flatMap((section) =>
     section.items.map((item) => ({
       item,
@@ -262,7 +263,7 @@ export default function TrustPanel({
   const restaurantFitScore = data.restaurant_fit_score ?? data.menu?.restaurant_fit_score ?? 20;
   const restaurantFitLabel =
     data.restaurant_fit_label ?? data.menu?.restaurant_fit_label ?? (menuItemCount > 0 ? "Needs verification" : "Scan needed");
-  const hasRestaurantFit = menuItemCount > 0 && restaurantFitScore != null;
+  const hasRestaurantFit = allergyMode && menuItemCount > 0 && restaurantFitScore != null;
   const restaurantFitTone = restaurantFitScore >= 70 ? "good" : restaurantFitScore >= 45 ? "caution" : "risk";
   const restaurantFitMessage =
     menuBucketCounts.avoid > 0 && menuBucketCounts.possible > 0
@@ -347,6 +348,7 @@ export default function TrustPanel({
     data.price_range ?? data.price_level?.replace("PRICE_LEVEL_", "").replace(/_/g, " ").toLowerCase() ?? null,
     formatPlaceType(data.primary_type),
   ].filter(Boolean).join(" · ");
+  const generalMatchLabel = (data.rating ?? 0) >= 4.5 ? "Popular nearby option" : "Restaurant match";
 
   return (
     <div className="trust-panel-content">
@@ -355,8 +357,10 @@ export default function TrustPanel({
         <div className="place-title-with-fit">
           <h2>{data.name}</h2>
           {hasRestaurantFit && <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}</span>}
+          {!allergyMode && data.rating != null && <span className="restaurant-rating-badge">{data.rating.toFixed(1)}★</span>}
         </div>
         {hasRestaurantFit && <p className="restaurant-fit-label">{restaurantFitLabel}</p>}
+        {!allergyMode && <p className="restaurant-fit-label">{generalMatchLabel}</p>}
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
       </div>
@@ -400,7 +404,7 @@ export default function TrustPanel({
               ))}
             </div>
           )}
-          {!hasRestaurantFit && (
+          {allergyMode && !hasRestaurantFit && (
             <div className="overview-line">
               <strong>Allergy read</strong>
               <p>{data.decision_brief.summary}</p>
@@ -412,7 +416,7 @@ export default function TrustPanel({
               <p>{restaurantFitMessage}</p>
             </div>
           )}
-          {agentRecommendation && !hasRestaurantFit && (
+          {allergyMode && agentRecommendation && !hasRestaurantFit && (
             <div className={`overview-line agent-risk ${agentRecommendation.overall_risk}`}>
               <strong>
                 Agentic risk: {formatRiskLabel(agentRecommendation.overall_risk)} ·{" "}
@@ -422,13 +426,13 @@ export default function TrustPanel({
               {agentConfidencePercent !== null && <p>{agentConfidencePercent}% source confidence.</p>}
             </div>
           )}
-          {agentRecommendation && agentRecommendation.missing_information.length > 0 && (
+          {allergyMode && agentRecommendation && agentRecommendation.missing_information.length > 0 && (
             <div className="overview-line">
               <strong>Missing information</strong>
               <p>{agentRecommendation.missing_information.slice(0, 2).join(" ")}</p>
             </div>
           )}
-          {agentRecommendation && agentRecommendation.recommended_questions.length > 0 && (
+          {allergyMode && agentRecommendation && agentRecommendation.recommended_questions.length > 0 && (
             <div className="overview-line">
               <strong>Questions for staff</strong>
               <p>{agentRecommendation.recommended_questions.slice(0, 2).join(" ")}</p>
@@ -441,13 +445,13 @@ export default function TrustPanel({
         <div className="place-tab-panel">
           <div
             className="place-status-row menu-tab-status-row"
-            title={`Source confidence ${confidencePercent}%. Evidence fit ${data.score_summary.fit_score}/100.`}
+            title={allergyMode ? `Source confidence ${confidencePercent}%. Evidence fit ${data.score_summary.fit_score}/100.` : "Menu extraction status"}
             aria-label="Menu and retrieval status"
           >
             <span className={menuItemCount > 0 ? "menu-found" : "menu-pending"}>
               {menuLifecycleLabel}
             </span>
-            <span className="needs-verification">{restaurantFitLabel}</span>
+            {allergyMode && <span className="needs-verification">{restaurantFitLabel}</span>}
             {ragStatus && !menuLifecycleLabel.includes("RAG index ready") && <span className={ragStatus.className}>{ragStatus.label}</span>}
             {ocrStatus && <span className={ocrStatus.className}>{ocrStatus.label}</span>}
             {refreshFailed && menuItemCount > 0 && <span className="refresh-failed">Refresh failed</span>}
@@ -467,7 +471,9 @@ export default function TrustPanel({
               <strong>Menu</strong>
               <p>
                 {menuItemCount > 0
-                  ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                  ? allergyMode
+                    ? `${menuItemCount} dish-level item${menuItemCount === 1 ? "" : "s"} extracted from available menu evidence. Verify ingredients and prep with staff.`
+                    : `${menuItemCount} menu item${menuItemCount === 1 ? "" : "s"} found.`
                   : refreshPending
                     ? "Menu scan is still running."
                   : scanHasRun
@@ -503,7 +509,7 @@ export default function TrustPanel({
               <div className="skeleton skeleton-line" />
               <div className="skeleton skeleton-review" />
             </div>
-          ) : menuSections.length > 0 ? (
+          ) : menuSections.length > 0 && allergyMode ? (
             <div className="menu-risk-groups">
               {menuRiskGroups.filter((group) => group.items.length > 0).map((group) => (
                 <section key={group.key} className={`menu-risk-group ${group.tone}`}>
@@ -537,6 +543,28 @@ export default function TrustPanel({
                       </article>
                     );
                   })}
+                </section>
+              ))}
+            </div>
+          ) : menuSections.length > 0 ? (
+            <div className="menu-risk-groups general-menu-groups">
+              {menuSections.map((section) => (
+                <section key={section.title} className="menu-risk-group general">
+                  <div className="menu-risk-group-header">
+                    <h3>{section.title}</h3>
+                    <span>{section.items.length}</span>
+                  </div>
+                  {section.items.slice(0, 12).map((item) => (
+                    <article key={`${section.title}-${item.name}`} className="menu-list-item compact-menu-row">
+                      <div>
+                        <div className="menu-item-heading">
+                          <strong>{item.name}</strong>
+                        </div>
+                        {item.description && <p className="menu-item-meta">{item.description}</p>}
+                      </div>
+                      {item.price && <span className="menu-price">{item.price}</span>}
+                    </article>
+                  ))}
                 </section>
               ))}
             </div>
@@ -613,19 +641,21 @@ export default function TrustPanel({
             </details>
           )}
 
-          <button type="button" className="ask-button" onClick={onAskRestaurant} disabled={isAskingRestaurant}>
-            {isAskingRestaurant ? "Saving question..." : "Ask restaurant to verify"}
-          </button>
-          {askResponse && <p className="menu-job-note">{askResponse.suggested_script}</p>}
+          {allergyMode && (
+            <button type="button" className="ask-button" onClick={onAskRestaurant} disabled={isAskingRestaurant}>
+              {isAskingRestaurant ? "Saving question..." : "Ask restaurant to verify"}
+            </button>
+          )}
+          {allergyMode && askResponse && <p className="menu-job-note">{askResponse.suggested_script}</p>}
         </div>
       )}
 
       {activeTab === "reviews" && (
         <div className="place-tab-panel">
-          <p className="panel-note">{signalSource}</p>
+          {allergyMode && <p className="panel-note">{signalSource}</p>}
           <p className="panel-note">{reviewSourceLine}</p>
 
-          <div className="review-group">
+          {allergyMode && <div className="review-group">
             <strong>Allergy review signals</strong>
             <p className="panel-note">
               Reviews are warning context only. AllerNav does not use them to prove that a dish is lower risk.
@@ -655,7 +685,7 @@ export default function TrustPanel({
                 );
               })}
             </div>
-          </div>
+          </div>}
 
           {data.evidence.length === 0 && reviewSnippets.length > 0 && (
             <div className="review-group">

@@ -148,7 +148,25 @@ test("Agentic RAG resets when the active search context changes", () => {
   assert.equal(source.includes("const nearbyContextKey = useMemo"), true);
   assert.equal(source.includes("nearbyContextRef.current !== nearbyContextKey"), true);
   assert.equal(source.includes("setNearbyAnswer(null)"), true);
-  assert.equal(source.includes('setNearbyAskError("Search this area first.")'), true);
+  assert.equal(source.includes('setNearbyAskError("Search this area first.")'), false);
+});
+
+test("Ask AllerNav searches the current map area before requesting RAG candidates", () => {
+  const source = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  assert.equal(source.includes('visiblePlaces = await runSearch(query.trim() || "restaurants", mapCenter, selectedAllergens)'), true);
+  assert.equal(source.includes('setNearbyAskError("No restaurants were found in this area.'), true);
+  assert.equal(source.includes('"Ready to search this area"'), true);
+  assert.equal(source.includes('"Searching area…"'), true);
+});
+
+test("no-allergy UI uses general discovery and hides allergy scoring", () => {
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  const panelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  assert.equal(pageSource.includes('nearbyAnswer.ranking_mode === "general_discovery"'), true);
+  assert.equal(pageSource.includes("nearby-rating-badge"), true);
+  assert.equal(panelSource.includes("const allergyMode = data.selected_allergens.length > 0"), true);
+  assert.equal(panelSource.includes("menuSections.length > 0 && allergyMode"), true);
+  assert.equal(panelSource.includes("!allergyMode && data.rating != null"), true);
 });
 
 test("place cards leave the restaurant score to the details header", () => {

@@ -202,7 +202,30 @@ NEGATIVE_SIGNALS: tuple[SignalConfig, ...] = (
 def analyze_place(place: dict[str, Any], allergens: Iterable[AllergyTag]) -> tuple[PlaceScoreSummary, list[ReviewEvidence], str]:
     selected_allergens = list(dict.fromkeys(allergens))
     if not selected_allergens:
-        selected_allergens = [AllergyTag.PEANUT]
+        rating = place.get("rating")
+        review_count = place.get("user_rating_count") or 0
+        score = round(
+            min(
+                100,
+                30
+                + ((rating or 0) / 5) * 50
+                + min(20, math.log10(review_count + 1) * 6),
+            )
+        )
+        summary = PlaceScoreSummary(
+            score=score,
+            verdict=Verdict.GOOD_FIT if score >= 75 else Verdict.USE_CAUTION,
+            confidence=0.8 if rating is not None else 0.35,
+            fit_score=score,
+            fit_verdict=Verdict.GOOD_FIT if score >= 75 else Verdict.USE_CAUTION,
+            evidence_confidence=0.8 if rating is not None else 0.35,
+            evidence_count=0,
+            meaningful_evidence=False,
+            evidence_status="general",
+            evidence_summary="General restaurant signals",
+        )
+        explanation = "No allergies selected. This restaurant match uses its Google rating and popularity."
+        return summary, [], explanation
 
     evidence_items: list[ReviewEvidence] = []
     positive_counter: Counter[str] = Counter()

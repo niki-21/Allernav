@@ -426,7 +426,29 @@ export function analyzePlace(
   evidence: ReviewEvidence[];
   explanation: string;
 } {
-  const selectedAllergens = Array.from(new Set<AllergyTag>(allergens.length > 0 ? allergens : ["peanut"]));
+  const selectedAllergens = Array.from(new Set<AllergyTag>(allergens));
+  if (selectedAllergens.length === 0) {
+    const score = Math.max(0, Math.min(100, Math.round(((place.rating ?? 0) / 5) * 100)));
+    const verdict: PlaceScoreSummary["verdict"] = score >= 75 ? "good_fit" : "use_caution";
+    return {
+      summary: {
+        score,
+        verdict,
+        confidence: place.rating != null ? 0.8 : 0.35,
+        fit_score: score,
+        fit_verdict: verdict,
+        evidence_confidence: place.rating != null ? 0.8 : 0.35,
+        positive_signals: [],
+        negative_signals: [],
+        evidence_count: 0,
+        meaningful_evidence: false,
+        evidence_status: "general",
+        evidence_summary: "General restaurant signals",
+      },
+      evidence: [],
+      explanation: "No allergies selected. This restaurant match uses its Google rating and popularity.",
+    };
+  }
   const evidenceItems: ReviewEvidence[] = [];
   const positiveCounter = new Map<string, number>();
   const negativeCounter = new Map<string, number>();

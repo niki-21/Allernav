@@ -47,6 +47,9 @@ async def suggest_nearby_places_service(
     payload: NearbySuggestionRequest,
 ) -> NearbySuggestionResponse:
     candidates = payload.candidate_places[: payload.max_places]
+    if not payload.allergens:
+        return build_general_nearby_response(payload, candidates)
+
     candidate_sources = [(place, load_menu_source(place.id)) for place in candidates]
     suggestions = list(
         await asyncio.gather(
@@ -75,6 +78,7 @@ async def suggest_nearby_places_service(
     return NearbySuggestionResponse(
         answer=answer,
         retrieval_mode=retrieval_mode,
+        ranking_mode="allergy_fit",
         places=suggestions,
         evidence=evidence,
         missing_information=missing_information,
@@ -83,6 +87,87 @@ async def suggest_nearby_places_service(
         top_scan_candidates=[suggestion.place for suggestion in top_scan_candidates],
         scan_job_ids=scan_job_ids,
     )
+
+
+def build_general_nearby_response(
+    payload: NearbySuggestionRequest,
+    candidates: list[PlaceListItem],
+) -> NearbySuggestionResponse:
+    suggestions = [build_general_place_suggestion(place, payload.center) for place in candidates]
+    suggestions.sort(key=lambda item: item.general_match_score or 0, reverse=True)
+    update_current_trace_metadata(
+        candidate_count=len(candidates),
+        scanned_candidate_count=sum(item.menu_item_count > 0 for item in suggestions),
+        scan_needed_count=0,
+        selected_allergens=[],
+        top_ranked_place=suggestions[0].place.name if suggestions else None,
+        restaurant_fit_score=None,
+        retrieval_mode="general_discovery",
+        allow_background_scan=False,
+        flow_stage="ranked_comparison",
+        ranking_mode="general_discovery",
+    )
+    return NearbySuggestionResponse(
+        answer=(
+            f"No allergies selected. I found {len(candidates)} nearby restaurant"
+            f"{'s' if len(candidates) != 1 else ''} and ranked them by rating, popularity, and distance."
+            if candidates
+            else "No allergies selected. I could not find restaurants in the current map area."
+        ),
+        retrieval_mode="general_discovery",
+        ranking_mode="general_discovery",
+        places=suggestions,
+        evidence=[],
+        missing_information=[],
+        recommended_questions=[],
+        scan_needed_places=[],
+        top_scan_candidates=[],
+        scan_job_ids=[],
+    )
+
+
+def build_general_place_suggestion(place: PlaceListItem, center: LatLng | None) -> NearbyPlaceSuggestion:
+    source = load_menu_source(place.id)
+    menu_item_count = sum(len(section.items) for section in source.sections) if source else 0
+    score = general_discovery_score(place, center, menu_item_count > 0)
+    label = general_discovery_label(place)
+    return NearbyPlaceSuggestion(
+        place=place.model_copy(update={"name": display_place_name(place.name)}),
+        confidence=round(score / 100, 2),
+        evidence_status="scanned" if menu_item_count else "scan_needed",
+        restaurant_fit_score=None,
+        general_match_score=score,
+        general_match_label=label,
+        menu_item_count=menu_item_count,
+        evidence_quality=round((source.reliability if source else 0), 2),
+        evidence_count=0,
+        evidence=[],
+        risk_note="No allergies selected; ranked using general restaurant signals.",
+        reason=(
+            f"{place.rating:.1f} Google rating with {(place.user_rating_count or 0):,} reviews."
+            if place.rating is not None
+            else "Ranked by distance and restaurant relevance; Google rating is unavailable."
+        ),
+        next_action="Open the restaurant details or menu to explore this option.",
+    )
+
+
+def general_discovery_score(place: PlaceListItem, center: LatLng | None, menu_available: bool) -> float:
+    rating_score = ((place.rating or 0) / 5) * 45
+    review_score = min(25, math.log10((place.user_rating_count or 0) + 1) * 8)
+    distance_score = 10.0 if center is None else max(0, 15 - distance_miles(place.location, center) * 5)
+    place_type = (place.primary_type or "").lower()
+    relevance_score = 10 if any(term in place_type for term in ("restaurant", "cafe", "bakery", "food", "bar")) else 0
+    menu_score = 5 if menu_available else 0
+    return round(min(100, rating_score + review_score + distance_score + relevance_score + menu_score), 2)
+
+
+def general_discovery_label(place: PlaceListItem) -> str:
+    if (place.rating or 0) >= 4.5 and (place.user_rating_count or 0) >= 100:
+        return "Popular nearby option"
+    if (place.rating or 0) >= 4.0:
+        return "Well-rated nearby option"
+    return "Nearby restaurant option"
 
 
 def build_place_suggestion(

@@ -1041,6 +1041,23 @@ textarea {
   color: #9d211d;
 }
 
+.nearby-rating-badge,
+.restaurant-rating-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid #9bb8e8;
+  border-radius: 7px;
+  background: #edf3fe;
+  color: #174ea6;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
 .nearby-rag-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1744,6 +1761,16 @@ body {
   border-color: #e8aaa5;
   background: #fce8e6;
   color: #a5221f;
+}
+
+.restaurant-rating-badge {
+  height: 40px;
+  margin-left: auto;
+  font-size: 0.9rem;
+}
+
+.menu-risk-group.general {
+  border-left-color: #6f8dbb;
 }
 
 .place-sheet-header .restaurant-fit-label {

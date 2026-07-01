@@ -80,3 +80,13 @@ def test_scan_needed_score_is_capped_and_not_recommended() -> None:
     score = score_restaurant_menu(None, [AllergyTag.PEANUT])
     assert score.score <= 20
     assert score.label == "Scan needed"
+
+
+def test_short_but_specific_dishes_are_not_over_penalized() -> None:
+    score = score_restaurant_menu(
+        menu_source([MenuItem(name="Plain Rice"), MenuItem(name="Roasted Vegetables"), MenuItem(name="Garden Salad")]),
+        [AllergyTag.PEANUT, AllergyTag.SESAME, AllergyTag.FISH],
+    )
+    assert score.possible_lower_risk_count == 3
+    assert score.insufficient_info_count == 0
+    assert score.score >= 70
