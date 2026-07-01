@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import unittest
 
@@ -24,8 +25,12 @@ APIFY_RENDERED_PAYLOAD = [
             "https://www.toasttab.com/example-restaurant/v3",
             "https://analytics.example/frame",
         ],
+        "images": ["https://restaurant.example/media/menu-page.jpg"],
+        "openGraphMedia": ["https://restaurant.example/media/menu-cover.png"],
+        "scriptUrls": ["https://cdn.example/menu-data.pdf"],
         "title": "Restaurant Menu",
         "visibleText": "Dinner Menu\nChicken Bowl - rice, chicken, tomato sauce\nShrimp Salad - greens, shrimp, lemon",
+        "screenshotBase64": base64.b64encode(b"fake-png").decode("ascii"),
     }
 ]
 
@@ -47,6 +52,9 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertEqual(payload["proxyConfiguration"], {"useApifyProxy": True})
         self.assertIn("pageFunction", payload)
         self.assertIn("page.$$eval('a[href]'", str(payload["pageFunction"]))
+        self.assertIn("page.$$eval('img'", str(payload["pageFunction"]))
+        self.assertIn("openGraphMedia", str(payload["pageFunction"]))
+        self.assertIn("screenshotBase64", str(payload["pageFunction"]))
         self.assertIn("load more content", str(payload["pageFunction"]).lower())
 
     def test_starts_with_discovered_category_pages_before_homepage(self) -> None:
@@ -73,6 +81,9 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertIn("https://restaurant.example/menu", urls)
         self.assertIn("https://restaurant.example/files/dinner.pdf", urls)
         self.assertIn("https://www.toasttab.com/example-restaurant/v3", urls)
+        self.assertIn("https://restaurant.example/media/menu-page.jpg", urls)
+        self.assertIn("https://restaurant.example/media/menu-cover.png", urls)
+        self.assertIn("https://cdn.example/menu-data.pdf", urls)
         self.assertNotIn("https://restaurant.example/about", urls)
         self.assertNotIn("https://analytics.example/frame", urls)
 
@@ -82,6 +93,7 @@ class ApifyMenuDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(discovery.pages), 1)
         self.assertEqual(discovery.pages[0].url, "https://restaurant.example/")
         self.assertIn("Chicken Bowl", discovery.pages[0].visible_text)
+        self.assertEqual(discovery.pages[0].screenshot_png, b"fake-png")
 
     def test_fetches_rendered_candidates_with_expected_actor_endpoint(self) -> None:
         calls = []

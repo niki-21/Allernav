@@ -48,6 +48,16 @@ create table if not exists public.menu_refresh_jobs (
   completed_at timestamptz
 );
 
+alter table public.menu_refresh_jobs add column if not exists restaurant_id text;
+alter table public.menu_refresh_jobs add column if not exists status text;
+alter table public.menu_refresh_jobs add column if not exists message text;
+alter table public.menu_refresh_jobs add column if not exists processed_documents integer not null default 0;
+alter table public.menu_refresh_jobs add column if not exists total_documents integer not null default 0;
+alter table public.menu_refresh_jobs add column if not exists job_json jsonb;
+alter table public.menu_refresh_jobs add column if not exists created_at timestamptz not null default now();
+alter table public.menu_refresh_jobs add column if not exists updated_at timestamptz not null default now();
+alter table public.menu_refresh_jobs add column if not exists completed_at timestamptz;
+
 create index if not exists menu_refresh_jobs_restaurant_idx
   on public.menu_refresh_jobs (restaurant_id, created_at desc);
 

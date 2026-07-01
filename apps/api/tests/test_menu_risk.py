@@ -76,3 +76,16 @@ def test_no_allergy_mode_does_not_add_risk_labels() -> None:
     result = classify_menu_item(MenuItem(name="Seafood Salad"), [])
     assert result.risk_label is None
     assert result.matched_allergens == []
+
+
+def test_arabic_ocr_evidence_maps_to_english_allergen_summary() -> None:
+    result = classify_menu_item(
+        MenuItem(name="سلطة الطحينة", description="طحينة، سمسم، خيار"),
+        [AllergyTag.SESAME],
+        source_confidence=0.9,
+    )
+
+    assert result.risk_label == "avoid"
+    assert result.matched_allergens == [AllergyTag.SESAME]
+    assert "sesame" in result.risk_reasons[0].lower()
+    assert "سمسم" in f"{result.name} {result.description}"

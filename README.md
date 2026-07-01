@@ -178,6 +178,14 @@ AZURE_OPENAI_CHAT_API_VERSION=2024-10-21
 
 Run `apps/api/supabase.sql` before enabling the queue so `menu_refresh_jobs` and `menu_document_pages` exist. Deployment commands and RBAC setup are documented in `apps/api/AZURE_MENU_WORKER.md`.
 
+Check durable persistence without exposing credentials:
+
+```bash
+curl "http://localhost:8000/api/debug/storage"
+```
+
+The response separately reports whether the environment is configured, menu records can be read, and refresh jobs can be inserted. `SUPABASE_URL` may be either the project URL or its `/rest/v1` endpoint; AllerNav normalizes both forms. PostgREST code `PGRST125` means the request used an invalid API path. An undefined-table error instead means the checked-in Supabase migration still needs to be applied.
+
 Interactive refreshes use one overall time budget so blocked pages cannot starve later fallbacks. If menu candidates are found but extraction exceeds that budget, the trace reports `needs_background_refresh` instead of treating the source as absent.
 
 ```bash
@@ -211,6 +219,22 @@ Refresh a menu from an official restaurant site:
 
 ```bash
 curl -X POST "http://localhost:8000/api/places/demo/menu-refresh?restaurant_name=Demo&website_url=https://example.com"
+```
+
+The public Arabic OCR fixture can be sent directly to the same pipeline. Azure Document Intelligence preserves the Arabic source text; querying the resulting menu with allergens returns English risk reasons alongside source-backed Arabic items and their PDF URL.
+
+```bash
+curl -X POST "http://localhost:8000/api/places/arabic-ocr-demo/menu-refresh" \
+  --get \
+  --data-urlencode "restaurant_name=AllerNav Arabic OCR Demo" \
+  --data-urlencode "website_url=https://allernav.vercel.app/demo/allernav_arabic_menu_ocr_test.pdf" \
+  --data-urlencode "force_refresh=true"
+
+# Use the id returned above until the job reaches complete or failed.
+curl "http://localhost:8000/api/menu-refresh-jobs/JOB_ID"
+
+# English risk summaries cite the original Arabic item through source_url.
+curl "http://localhost:8000/api/places/arabic-ocr-demo/menu?allergens=sesame&allergens=fish&allergens=peanut"
 ```
 
 The same endpoints are also available under `/api/...` so the existing frontend API prefix can target this service with:

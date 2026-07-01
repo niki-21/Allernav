@@ -456,6 +456,76 @@ class MenuIngestionTests(unittest.TestCase):
         self.assertEqual(source.page_count, 2)
         self.assertEqual(source.sections[0].items[0].name, "Tuna Roll")
 
+    def test_accepts_direct_public_pdf_as_the_menu_source(self) -> None:
+        document_url = "https://allernav.vercel.app/demo/allernav_arabic_menu_ocr_test.pdf"
+        extracted_urls: list[str] = []
+
+        source = ingest_menu_from_website(
+            restaurant_id="arabic-demo",
+            restaurant_name="AllerNav Arabic OCR Demo",
+            website_url=document_url,
+            fetch_html=lambda _url: None,
+            extract_document=lambda url: (
+                extracted_urls.append(url)
+                or DocumentExtraction(
+                    content="سلطة الطحينة - طحينة، سمسم، خيار\nسلمون مشوي - سمك سلمون، أرز",
+                    content_type="application/pdf",
+                    extraction_method="azure_document_intelligence",
+                    page_count=1,
+                    confidence=0.91,
+                )
+            ),
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(extracted_urls, [document_url])
+        self.assertEqual(source.document_url, document_url)
+        self.assertIn("سمسم", source.raw_text or "")
+        self.assertEqual([item.name for item in source.sections[0].items], ["سلطة الطحينة", "سلمون مشوي"])
+
+    def test_mangoville_static_failure_runs_rendered_screenshot_ocr(self) -> None:
+        trace = []
+        rendered = RenderedMenuDiscovery(
+            urls=[],
+            pages=[
+                RenderedMenuPage(
+                    url="https://mangoville1948.com/menu/",
+                    title="Mangoville Menu",
+                    visible_text="Menu",
+                    screenshot_png=b"rendered-menu-png",
+                )
+            ],
+        )
+
+        with patch("allernav_api.menu_ingestion.fetch_html_url", return_value="<html><title>Mangoville Menu</title></html>"), patch(
+            "allernav_api.menu_ingestion.discover_web_menu_candidates",
+            return_value=[],
+        ), patch(
+            "allernav_api.menu_ingestion.discover_rendered_menu_evidence_safely",
+            return_value=rendered,
+        ):
+            source = ingest_menu_from_website(
+                restaurant_id="mangoville",
+                restaurant_name="Mangoville",
+                website_url="https://mangoville1948.com/menu/",
+                extract_bytes=lambda content, content_type: DocumentExtraction(
+                    content="Mango Chicken - chicken, mango, rice\nVegetable Plate - vegetables, rice, herbs",
+                    content_type=content_type,
+                    extraction_method="azure_document_intelligence",
+                    page_count=1,
+                    confidence=0.84,
+                ) if content == b"rendered-menu-png" else None,
+                db_path=self.db_path,
+                trace=trace,
+            )
+
+        self.assertEqual(source.extraction_method, "azure_document_intelligence_screenshot")
+        self.assertEqual(source.sections[0].items[0].name, "Mango Chicken")
+        self.assertTrue(any(step.id == "rendered_menu_scan_running" for step in trace))
+        self.assertTrue(any(step.id == "screenshot_ocr_running" for step in trace))
+        self.assertTrue(any(step.id == "screenshot_ocr_complete" for step in trace))
+        self.assertFalse(any(step.status == "skipped_no_document" for step in trace))
+
     def test_source_identity_accepts_official_domain_and_rejects_unrelated_menu_page(self) -> None:
         accepted, _detail = validate_source_identity(
             candidate_url="https://menus.restaurant.example/dinner",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,7 +19,9 @@ class SupabaseConfig:
 
 
 _LAST_ERROR: str | None = None
+_LAST_ERROR_DETAILS: dict[str, object] | None = None
 _ERROR_LOCK = Lock()
+LOGGER = logging.getLogger(__name__)
 
 
 def get_supabase_config() -> SupabaseConfig | None:
@@ -26,6 +29,8 @@ def get_supabase_config() -> SupabaseConfig | None:
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     if not url or not key:
         return None
+    if url.endswith("/rest/v1"):
+        url = url[: -len("/rest/v1")]
     return SupabaseConfig(url=url, service_role_key=key)
 
 
@@ -38,10 +43,16 @@ def last_error() -> str | None:
         return _LAST_ERROR
 
 
-def _set_last_error(message: str | None) -> None:
-    global _LAST_ERROR
+def last_error_details() -> dict[str, object] | None:
+    with _ERROR_LOCK:
+        return dict(_LAST_ERROR_DETAILS) if _LAST_ERROR_DETAILS else None
+
+
+def _set_last_error(message: str | None, details: dict[str, object] | None = None) -> None:
+    global _LAST_ERROR, _LAST_ERROR_DETAILS
     with _ERROR_LOCK:
         _LAST_ERROR = message
+        _LAST_ERROR_DETAILS = dict(details) if details else None
 
 
 def storage_diagnostics() -> dict[str, object]:
@@ -50,8 +61,8 @@ def storage_diagnostics() -> dict[str, object]:
     if not config:
         return {
             "supabase_env_configured": False,
-            "supabase_menu_records_read_ok": False,
-            "supabase_menu_refresh_jobs_write_ok": False,
+            "menu_records_read_ok": False,
+            "menu_refresh_jobs_insert_ok": False,
             "last_supabase_error": "Supabase environment variables are not configured.",
         }
 
@@ -62,10 +73,10 @@ def storage_diagnostics() -> dict[str, object]:
         query={"select": "restaurant_id", "limit": "1"},
     )
     read_ok = read_result is not None
-    read_error = last_error()
+    read_error = last_error_details() or last_error()
 
     now = datetime.now(UTC).isoformat()
-    probe_id = f"storage-diagnostic-{uuid4()}"
+    probe_id = str(uuid4())
     write_result = _request(
         config,
         "/rest/v1/menu_refresh_jobs",
@@ -88,7 +99,7 @@ def storage_diagnostics() -> dict[str, object]:
         query={"on_conflict": "id"},
     )
     write_ok = write_result is not None
-    write_error = last_error()
+    write_error = last_error_details() or last_error()
     if write_ok:
         _request(
             config,
@@ -98,11 +109,14 @@ def storage_diagnostics() -> dict[str, object]:
         )
 
     diagnostic_error = write_error or read_error
-    _set_last_error(diagnostic_error)
+    if isinstance(diagnostic_error, dict):
+        _set_last_error(str(diagnostic_error.get("summary") or "Supabase storage diagnostic failed."), diagnostic_error)
+    else:
+        _set_last_error(diagnostic_error)
     return {
         "supabase_env_configured": True,
-        "supabase_menu_records_read_ok": read_ok,
-        "supabase_menu_refresh_jobs_write_ok": write_ok,
+        "menu_records_read_ok": read_ok,
+        "menu_refresh_jobs_insert_ok": write_ok,
         "last_supabase_error": diagnostic_error,
     }
 
@@ -324,7 +338,9 @@ def _request(
             raw = response.read().decode("utf-8", errors="ignore")
     except error.HTTPError as exc:
         response_text = exc.read().decode("utf-8", errors="ignore") if exc.fp else ""
-        _set_last_error(_sanitized_http_error(exc, response_text, config))
+        summary, details = _sanitized_http_error(exc, response_text, config, path)
+        _set_last_error(summary, details)
+        LOGGER.warning("Supabase request failed: %s", json.dumps(details, ensure_ascii=True, sort_keys=True))
         return None
     except error.URLError as exc:
         _set_last_error(f"Supabase connection error: {_sanitize_text(str(exc.reason), config)}")
@@ -344,12 +360,18 @@ def _request(
         return None
 
 
-def _sanitized_http_error(exc: error.HTTPError, response_text: str, config: SupabaseConfig) -> str:
+def _sanitized_http_error(
+    exc: error.HTTPError,
+    response_text: str,
+    config: SupabaseConfig,
+    path: str,
+) -> tuple[str, dict[str, object]]:
     details: list[str] = []
     try:
         payload = json.loads(response_text)
     except json.JSONDecodeError:
         payload = None
+    postgrest_code = payload.get("code") if isinstance(payload, dict) and isinstance(payload.get("code"), str) else None
     if isinstance(payload, dict):
         for key in ("code", "message", "details", "hint"):
             value = payload.get(key)
@@ -357,8 +379,25 @@ def _sanitized_http_error(exc: error.HTTPError, response_text: str, config: Supa
                 details.append(value.strip())
     elif response_text.strip():
         details.append(response_text.strip())
+    sanitized_body = _sanitize_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")) if payload is not None else response_text,
+        config,
+    )
+    table_name = path.rstrip("/").split("/")[-1] or "unknown"
     suffix = f": {'; '.join(details)}" if details else ""
-    return _sanitize_text(f"Supabase HTTP {exc.code} {exc.reason}{suffix}", config)
+    summary = _sanitize_text(
+        f"Supabase HTTP {exc.code} {exc.reason} | table={table_name} | path={path}"
+        f" | code={postgrest_code or 'unknown'}{suffix}",
+        config,
+    )
+    return summary, {
+        "status_code": exc.code,
+        "table_name": table_name,
+        "request_path": path,
+        "response_body": sanitized_body,
+        "postgrest_code": postgrest_code,
+        "summary": summary,
+    }
 
 
 def _sanitize_text(value: str, config: SupabaseConfig) -> str:

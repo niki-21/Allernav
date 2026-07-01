@@ -33,6 +33,7 @@ from .web_menu_discovery import WebMenuCandidate, discover_web_menu_candidates, 
 
 FetchHtml = Callable[[str], str | None]
 ExtractDocument = Callable[[str], DocumentExtraction | None]
+ExtractBytes = Callable[[bytes, str], DocumentExtraction | None]
 
 MENU_NAVIGATION_WORDS = {
     "home",
@@ -399,13 +400,18 @@ def ingest_menu_from_website(
     restaurant_address: str | None = None,
     fetch_html: FetchHtml | None = None,
     extract_document: ExtractDocument | None = None,
+    extract_bytes: ExtractBytes | None = None,
     db_path: Path | None = None,
     trace: list[IngestionTraceStep] | None = None,
     fast_only: bool = False,
     deep_scan: bool = False,
 ) -> MenuSource:
     fetcher = fetch_html or fetch_html_url
-    document_extractor = extract_document or extract_document_from_url
+    document_client = AzureDocumentIntelligenceClient()
+    document_extractor = extract_document or document_client.extract_from_url
+    byte_extractor = extract_bytes or (
+        lambda content, content_type: document_client.extract_from_bytes(content, content_type=content_type)
+    )
     started_at = time.monotonic()
     deadline = started_at + menu_ingestion_timeout_seconds()
     discovery_deadline = min(deadline, started_at + 8.0)
@@ -474,6 +480,16 @@ def ingest_menu_from_website(
             provider="azure_document_intelligence",
             source_url=document_candidates[0],
         )
+    elif fast_only and not static_item_count:
+        append_trace_step(
+            trace,
+            step_id="document_ocr",
+            label="Read menu document",
+            status="deferred",
+            detail="Rendered discovery and screenshot OCR were deferred to the deeper background scan.",
+            provider="azure_document_intelligence",
+            source_url=website_url,
+        )
     elif document_candidates:
         ocr_configured = AzureDocumentIntelligenceClient().configured or extract_document is not None
         used_ocr = bool(last_source and last_source.extraction_method == "azure_document_intelligence")
@@ -495,7 +511,7 @@ def ingest_menu_from_website(
             source_url=(last_source.document_url if last_source else None) or document_candidates[0],
             item_count=static_item_count if used_ocr else 0,
         )
-    else:
+    elif static_item_count:
         append_trace_step(
             trace,
             step_id="document_ocr",
@@ -596,6 +612,19 @@ def ingest_menu_from_website(
         key=candidate_url_priority,
     )
     should_render = fetch_html is None and rendered_budget >= 3.0
+    append_trace_step(
+        trace,
+        step_id="rendered_menu_scan_running",
+        label="Inspect rendered menu sources",
+        status="running" if should_render else "skipped",
+        detail=(
+            "Inspecting rendered links, iframes, images, script data, and OpenGraph media."
+            if should_render
+            else "Rendered discovery is unavailable for this scan."
+        ),
+        provider="apify_playwright",
+        source_url=website_url,
+    )
     rendered_discovery = (
         discover_rendered_menu_evidence_safely(
             website_url,
@@ -679,6 +708,35 @@ def ingest_menu_from_website(
         best_source = better_menu_source(best_source, rendered_link_source)
     if rendered_link_source:
         last_source = rendered_link_source
+
+    screenshot_source: MenuSource | None = None
+    if not menu_source_item_count(rendered_link_source) and not rendered_item_count:
+        screenshot_source = ingest_rendered_screenshot_ocr(
+            rendered_discovery=rendered_discovery,
+            extract_bytes=byte_extractor,
+            restaurant_id=restaurant_id,
+            restaurant_name=restaurant_name,
+            official_website_url=website_url,
+            trace=trace,
+            db_path=db_path,
+        )
+        if screenshot_source and screenshot_source.sections:
+            _record_document_ocr(trace, screenshot_source)
+            if not deep_scan:
+                return screenshot_source
+            best_source = better_menu_source(best_source, screenshot_source)
+        if screenshot_source:
+            last_source = screenshot_source
+
+    if not document_candidates and not any(step.id == "document_ocr" for step in trace or []):
+        append_trace_step(
+            trace,
+            step_id="document_ocr",
+            label="Read menu document",
+            status="skipped_no_document",
+            detail="No direct document or rendered screenshot was available for OCR.",
+            provider="azure_document_intelligence",
+        )
 
     if best_source and best_source.sections:
         save_menu_source(
@@ -852,6 +910,88 @@ def ingest_rendered_menu_pages(
             continue
         source = parse_rendered_menu_text(rendered_page.visible_text, rendered_page.url)
         last_source = source
+        if source.sections:
+            save_menu_source(
+                restaurant_id=restaurant_id,
+                restaurant_name=restaurant_name,
+                source=source,
+                db_path=db_path,
+            )
+            return source
+    return last_source
+
+
+def ingest_rendered_screenshot_ocr(
+    *,
+    rendered_discovery: RenderedMenuDiscovery,
+    extract_bytes: ExtractBytes,
+    restaurant_id: str,
+    restaurant_name: str | None,
+    official_website_url: str | None,
+    trace: list[IngestionTraceStep] | None = None,
+    db_path: Path | None = None,
+) -> MenuSource | None:
+    screenshot_pages = [page for page in rendered_discovery.pages if page.screenshot_png]
+    if not screenshot_pages:
+        append_trace_step(
+            trace,
+            step_id="screenshot_ocr_failed",
+            label="Read rendered menu screenshot",
+            status="failed",
+            detail="Rendered discovery did not return a menu-page screenshot for OCR.",
+            provider="azure_document_intelligence",
+            source_url=official_website_url,
+        )
+        return None
+
+    last_source: MenuSource | None = None
+    for page in screenshot_pages:
+        accepted, detail = validate_source_identity(
+            candidate_url=page.url,
+            official_website_url=official_website_url,
+            restaurant_name=restaurant_name,
+            page_text=f"{page.title or ''}\n{page.visible_text}",
+        )
+        _record_source_identity(trace, page.url, accepted, detail)
+        if not accepted:
+            continue
+
+        started_at = time.monotonic()
+        append_trace_step(
+            trace,
+            step_id="screenshot_ocr_running",
+            label="Read rendered menu screenshot",
+            status="running",
+            detail="Sending the official rendered menu screenshot to Azure Document Intelligence.",
+            provider="azure_document_intelligence",
+            source_url=page.url,
+        )
+        extraction = extract_bytes(page.screenshot_png or b"", "image/png")
+        source = menu_source_from_document_extraction(
+            extraction,
+            source_url=page.url,
+            document_url=page.url,
+            fallback_content_type="image/png",
+            extraction_method="azure_document_intelligence_screenshot",
+        )
+        last_source = source
+        item_count = menu_source_item_count(source)
+        append_trace_step(
+            trace,
+            step_id="screenshot_ocr_complete" if item_count else "screenshot_ocr_failed",
+            label="Read rendered menu screenshot",
+            status="complete" if item_count else "failed",
+            detail=(
+                f"Screenshot OCR extracted {item_count} usable dish-level item"
+                f"{'s' if item_count != 1 else ''}."
+                if item_count
+                else "Azure Document Intelligence returned no usable dish-level items from the screenshot."
+            ),
+            provider="azure_document_intelligence",
+            source_url=page.url,
+            item_count=item_count,
+            started_at=started_at,
+        )
         if source.sections:
             save_menu_source(
                 restaurant_id=restaurant_id,
@@ -1069,38 +1209,79 @@ def parse_menu_html(html_text: str, source_url: str) -> MenuSource:
 
 
 def parse_menu_document(document_url: str, extract_document: ExtractDocument | None = None) -> MenuSource:
-    timestamp = datetime.now(UTC).isoformat()
     extractor = extract_document or extract_document_from_url
     extraction = extractor(document_url)
+    return menu_source_from_document_extraction(
+        extraction,
+        source_url=document_url,
+        document_url=document_url,
+        fallback_content_type=document_content_type(document_url),
+    )
+
+
+def menu_source_from_document_extraction(
+    extraction: DocumentExtraction | None,
+    *,
+    source_url: str,
+    document_url: str,
+    fallback_content_type: str,
+    extraction_method: str | None = None,
+) -> MenuSource:
+    timestamp = datetime.now(UTC).isoformat()
     if not extraction:
         return MenuSource(
             source_type=SourceType.OFFICIAL_MENU,
-            source_url=document_url,
+            source_url=source_url,
             source_timestamp=timestamp,
             reliability=0.2,
             raw_text=None,
             sections=[],
-            content_type=document_content_type(document_url),
+            content_type=fallback_content_type,
             document_url=document_url,
-            extraction_method="azure_document_intelligence",
+            extraction_method=extraction_method or "azure_document_intelligence",
         )
 
-    sections = sanitize_sections(parse_raw_menu_text(extraction.content))
+    cleaned_content = clean_ocr_text(extraction.content)
+    sections = sanitize_sections(parse_raw_menu_text(cleaned_content))
+    sections = [
+        section.model_copy(
+            update={
+                "items": [
+                    item.model_copy(
+                        update={
+                            "source_url": document_url,
+                            "ocr_confidence": extraction.confidence,
+                        }
+                    )
+                    for item in section.items
+                ]
+            }
+        )
+        for section in sections
+    ]
     confidence = extraction.confidence if extraction.confidence is not None else 0.55
     reliability = round(min(0.76, max(0.22, confidence)), 2) if sections else 0.22
     return MenuSource(
         source_type=SourceType.OFFICIAL_MENU,
-        source_url=document_url,
+        source_url=source_url,
         source_timestamp=timestamp,
         reliability=reliability,
-        raw_text=summarize_menu_text(sections) or None,
+        raw_text=cleaned_content or None,
         sections=sections,
         content_type=extraction.content_type,
         document_url=document_url,
-        extraction_method=extraction.extraction_method,
+        extraction_method=extraction_method or extraction.extraction_method,
         page_count=extraction.page_count,
         extraction_confidence=extraction.confidence,
     )
+
+
+def clean_ocr_text(content: str) -> str:
+    return "\n".join(
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not is_prompt_injection(line)
+    )[:100_000]
 
 
 def parse_rendered_menu_text(text: str, source_url: str) -> MenuSource:
@@ -1348,9 +1529,15 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if looks_like_preparation_phrase_without_dish(name, description):
         return False
+    if contains_arabic(name) and description and contains_arabic(description):
+        return len(name.strip()) >= 3 and len(description.strip()) >= 3
     if len([term for term in terms if term]) <= 1 and not description:
         return False
     return menu_item_quality_score(name, description) >= 4
+
+
+def contains_arabic(value: str) -> bool:
+    return bool(re.search(r"[\u0600-\u06ff]", value))
 
 
 def menu_item_quality_score(name: str, description: str | None = None) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ class RenderedMenuPage:
     url: str
     title: str | None
     visible_text: str
+    screenshot_png: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -59,15 +61,35 @@ async function pageFunction(context) {
     }));
 
     const frames = page.frames().map((frame) => frame.url()).filter(Boolean);
+    const images = await page.$$eval('img', (nodes) => nodes.flatMap((image) => {
+        const srcset = (image.getAttribute('srcset') || '').split(',').map((entry) => entry.trim().split(/\s+/)[0]);
+        return [image.src, image.getAttribute('data-src'), image.getAttribute('data-image'), ...srcset].filter(Boolean);
+    }));
+    const openGraphMedia = await page.$$eval(
+        'meta[property="og:image"], meta[property="og:image:secure_url"], meta[property="og:video"], meta[name="twitter:image"]',
+        (nodes) => nodes.map((node) => node.getAttribute('content')).filter(Boolean),
+    );
+    const scriptUrls = await page.$$eval('script:not([src])', (nodes) => {
+        const text = nodes.map((node) => node.textContent || '').join('\n').slice(0, 200000);
+        return Array.from(text.matchAll(/https?:\\?\/\\?\/[^\s"'<>]+/g))
+            .map((match) => match[0].replace(/\\\//g, '/'))
+            .filter((value) => /menu|\.pdf|\.png|\.jpe?g|\.webp/i.test(value))
+            .slice(0, 30);
+    });
     const title = await page.title().catch(() => '');
     const visibleText = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
+    const screenshot = await page.screenshot({ type: 'png', fullPage: true }).catch(() => null);
 
     return {
         url: request.url,
         title,
         links,
         frames,
+        images,
+        openGraphMedia,
+        scriptUrls,
         visibleText: visibleText.slice(0, 12000),
+        screenshotBase64: screenshot ? screenshot.toString('base64') : null,
     };
 }
 """.replace("__WAIT_MS__", str(wait_ms))
@@ -219,7 +241,7 @@ def flatten_items(payload: Any) -> list[dict[str, Any]]:
         return output
     if not isinstance(payload, dict):
         return []
-    if any(key in payload for key in ("links", "frames", "url", "href", "menuUrls", "urls")):
+    if any(key in payload for key in ("links", "frames", "images", "openGraphMedia", "scriptUrls", "url", "href", "menuUrls", "urls")):
         return [payload]
     output: list[dict[str, Any]] = []
     for key in ("items", "data", "results"):
@@ -235,7 +257,7 @@ def extract_urls_from_item(item: dict[str, Any]) -> list[str]:
         value = item.get(key)
         if isinstance(value, str):
             urls.append(value)
-    for key in ("frames", "menuUrls", "urls"):
+    for key in ("frames", "images", "openGraphMedia", "scriptUrls", "menuUrls", "urls"):
         value = item.get(key)
         if isinstance(value, list):
             urls.extend(entry for entry in value if isinstance(entry, str))
@@ -255,18 +277,30 @@ def extract_rendered_page(item: dict[str, Any]) -> RenderedMenuPage | None:
     url = item.get("url")
     visible_text = item.get("visibleText") or item.get("visible_text") or item.get("text")
     title = item.get("title")
-    if not isinstance(url, str) or not isinstance(visible_text, str):
+    screenshot = decode_screenshot(item.get("screenshotBase64") or item.get("screenshot_base64"))
+    if not isinstance(url, str):
         return None
-    cleaned = visible_text.strip()
-    if len(cleaned) < 40:
+    cleaned = visible_text.strip() if isinstance(visible_text, str) else ""
+    if len(cleaned) < 40 and screenshot is None:
         return None
-    if not looks_like_rendered_menu_text(cleaned):
+    if screenshot is None and not looks_like_rendered_menu_text(cleaned):
         return None
     return RenderedMenuPage(
         url=url,
         title=title if isinstance(title, str) else None,
         visible_text=cleaned,
+        screenshot_png=screenshot,
     )
+
+
+def decode_screenshot(value: object) -> bytes | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        content = base64.b64decode(value, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return None
+    return content if 0 < len(content) <= 15 * 1024 * 1024 else None
 
 
 def looks_like_rendered_menu_text(text: str) -> bool:

@@ -190,9 +190,15 @@ class ApiTests(unittest.TestCase):
     def test_storage_debug_returns_sanitized_diagnostics(self) -> None:
         diagnostics = {
             "supabase_env_configured": True,
-            "supabase_menu_records_read_ok": True,
-            "supabase_menu_refresh_jobs_write_ok": False,
-            "last_supabase_error": "Supabase HTTP 400: missing column job_json",
+            "menu_records_read_ok": True,
+            "menu_refresh_jobs_insert_ok": False,
+            "last_supabase_error": {
+                "status_code": 404,
+                "table_name": "menu_refresh_jobs",
+                "request_path": "/rest/v1/menu_refresh_jobs",
+                "response_body": '{"code":"PGRST125"}',
+                "postgrest_code": "PGRST125",
+            },
         }
         with patch("app.supabase_store.storage_diagnostics", return_value=diagnostics):
             response = TestClient(app).get("/api/debug/storage")
