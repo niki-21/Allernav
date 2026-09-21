@@ -16,6 +16,7 @@ from allernav_api.menu_ingestion import (
     ingest_first_matching_source,
     load_menu_source,
     load_place_menu,
+    looks_like_real_menu_item,
     parse_menu_html,
     parse_menu_document,
     save_menu_source,
@@ -46,6 +47,11 @@ JSON_LD_MENU = """
 </html>
 """
 
+
+class MenuItemArtifactTests(unittest.TestCase):
+    def test_price_allergen_controls_are_not_dishes(self) -> None:
+        self.assertFalse(looks_like_real_menu_item("AED 178 Allergens", "fish, soy detected"))
+        self.assertFalse(looks_like_real_menu_item("125 Allergens", "soy"))
 
 SIMPLE_HTML_MENU = """
 <html>

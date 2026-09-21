@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
+import { useAuth } from "@/components/AuthProvider";
 import { fetchCommunityReviews, submitCommunityReview } from "@/lib/api";
 
 import type {
@@ -101,6 +102,10 @@ function formatAllergen(value: AllergyTag): string {
   return value.replace(/_/g, " ");
 }
 
+function isMenuDisplayArtifact(item: MenuItem): boolean {
+  return /^(?:aed|usd|eur|gbp)?\s*\d+(?:\.\d+)?\s+allergens?$/i.test(item.name.trim());
+}
+
 function getMenuVerification(
   item: MenuItem,
   selectedAllergens: AllergyTag[],
@@ -128,15 +133,10 @@ function getMenuVerification(
   }
 
   if (item.risk_label === "needs_check") {
-    const brothOrSauceCheck = item.risk_reasons?.some((reason) =>
-      reason.toLowerCase().includes("broth") || reason.toLowerCase().includes("seafood"),
-    );
     return {
       label: "Needs check",
       tone: "needs-check",
-      metadata: brothOrSauceCheck
-        ? "seafood/broth/sauce needs staff verification"
-        : "preparation needs staff review",
+      metadata: "",
       detail: detail || "Preparation or ingredient wording needs staff verification.",
     };
   }
@@ -153,7 +153,7 @@ function getMenuVerification(
   return {
     label: "Possible lower-risk",
     tone: typeof confidence === "number" && confidence < 0.72 ? "possible-weak" : "possible",
-    metadata: "no selected allergen detected · verify prep",
+    metadata: "",
     detail: detail || "No selected allergen was detected in the available menu text. Verify preparation with staff.",
   };
 }
@@ -180,6 +180,7 @@ export default function TrustPanel({
   menuRefreshJob,
   onRefreshMenu,
 }: TrustPanelProps) {
+  const { session, user, points, signInWithGoogle, refreshPoints } = useAuth();
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
     tab: "summary",
@@ -245,7 +246,9 @@ export default function TrustPanel({
 
   const { data } = detailState;
   const activeTab = tabState.placeId === data.id ? tabState.tab : "summary";
-  const menuSections = data.menu?.sections ?? [];
+  const menuSections = (data.menu?.sections ?? [])
+    .map((section) => ({ ...section, items: section.items.filter((item) => !isMenuDisplayArtifact(item)) }))
+    .filter((section) => section.items.length > 0);
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
   const allergyMode = data.selected_allergens.length > 0;
   const classifiedMenuItems = menuSections.flatMap((section) =>
@@ -318,11 +321,6 @@ export default function TrustPanel({
         Math.max(1, communityReviews.filter((review) => typeof review.rating === "number").length)
       : null;
   const reviewSource = data.review_source_summary;
-  const reviewSignalCount = data.evidence.length;
-  const signalSource =
-    reviewSignalCount > 0
-        ? `${reviewSignalCount} allergy signal${reviewSignalCount === 1 ? "" : "s"}`
-        : "No allergy-specific review signals";
   const reviewSourceLine = reviewSource
     ? reviewSource.expanded_reviews_configured
       ? reviewSource.expanded_review_status === "deferred"
@@ -400,28 +398,23 @@ export default function TrustPanel({
 
   const handleCommunityReviewSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!session?.access_token) {
+      setReviewStatus("error");
+      setReviewMessage("Sign in with Google above the allergy filters to post and earn points.");
+      return;
+    }
     setReviewStatus("saving");
     setReviewMessage(null);
     try {
-      const reviewerStorageKey = "allernav_reviewer_id";
-      let reviewerId = window.localStorage.getItem(reviewerStorageKey);
-      if (!reviewerId) {
-        reviewerId = crypto.randomUUID();
-        window.localStorage.setItem(reviewerStorageKey, reviewerId);
-      }
       const result = await submitCommunityReview(data.id, {
         ...reviewDraft,
         allergens: data.selected_allergens,
-        reviewer_id: reviewerId,
-      });
+      }, session.access_token);
       setCommunityReviews((current) => [result.review, ...current.filter((review) => review.id !== result.review.id)]);
       setReviewDraft({ author_name: reviewDraft.author_name, body: "", rating: reviewDraft.rating });
       setReviewStatus("saved");
-      setReviewMessage(
-        result.points_awarded > 0
-          ? `Saved. ${result.points_awarded} demo point${result.points_awarded === 1 ? "" : "s"} added to this reviewer profile.`
-          : "Saved. Sign in support can attach points to a permanent account next.",
-      );
+      setReviewMessage(`Saved. +${result.points_awarded} points · ${result.total_points} total.`);
+      await refreshPoints();
     } catch (error) {
       setReviewStatus("error");
       setReviewMessage(error instanceof Error ? error.message : "Review could not be saved.");
@@ -559,6 +552,11 @@ export default function TrustPanel({
               </p>
             </div>
           )}
+          {allergyMode && menuItemCount > 0 && (
+            <p className="menu-allergy-disclaimer">
+              Menu labels use available text only. Confirm ingredients, sauces, and shared preparation with staff.
+            </p>
+          )}
           {refreshPending && menuSections.length === 0 ? (
             <div className="menu-loading-state">
               <strong>Menu scan is still running</strong>
@@ -597,9 +595,9 @@ export default function TrustPanel({
                               {verification.label}
                             </span>
                           </div>
-                          <p className={`menu-item-meta ${verification.tone}`}>
-                            {verification.metadata}
-                          </p>
+                          {verification.metadata && (
+                            <p className={`menu-item-meta ${verification.tone}`}>{verification.metadata}</p>
+                          )}
                         </div>
                         {item.price && <span className="menu-price">{item.price}</span>}
                       </article>
@@ -766,15 +764,16 @@ export default function TrustPanel({
           </div>
 
           <form className="community-review-form" onSubmit={handleCommunityReviewSubmit}>
+            <div className="community-account-line">
+              {user ? (
+                <span><strong>{user.user_metadata?.full_name ?? user.email}</strong> · {points} total points</span>
+              ) : (
+                <button type="button" className="google-sign-in-inline" onClick={() => void signInWithGoogle()}>
+                  Continue with Google to review
+                </button>
+              )}
+            </div>
             <div className="community-form-row">
-              <label>
-                Name
-                <input
-                  value={reviewDraft.author_name}
-                  onChange={(event) => setReviewDraft((current) => ({ ...current, author_name: event.target.value }))}
-                  placeholder="Your name"
-                />
-              </label>
               <label>
                 Rating
                 <select
@@ -799,8 +798,8 @@ export default function TrustPanel({
               />
             </label>
             <div className="community-review-footer">
-              <small>Login will be used for permanent points; this demo ties points to a browser reviewer profile.</small>
-              <button type="submit" className="retry-button" disabled={reviewStatus === "saving"}>
+              <small>Signed-in reviews earn points tied to your AllerNav account.</small>
+              <button type="submit" className="retry-button" disabled={reviewStatus === "saving" || !user}>
                 {reviewStatus === "saving" ? "Saving..." : "Post review"}
               </button>
             </div>
@@ -827,16 +826,10 @@ export default function TrustPanel({
             </div>
           )}
 
-          {allergyMode && <div className="review-group">
-            <strong>Google allergy signals</strong>
-            <p className="panel-note">{signalSource}. {reviewSourceLine}</p>
+          {allergyMode && data.evidence.length > 0 && <details className="review-group google-signal-details">
+            <summary>Google allergy mentions ({data.evidence.length})</summary>
+            <p className="panel-note">{reviewSourceLine}</p>
             <div className="evidence-list compact">
-              {data.evidence.length === 0 && (
-                <article className="evidence-item empty">
-                  <p className="evidence-excerpt">No allergy-specific review quotes were found for this place yet.</p>
-                </article>
-              )}
-
               {data.evidence.slice(0, 4).map((item) => {
                 return (
                   <article
@@ -855,26 +848,10 @@ export default function TrustPanel({
                 );
               })}
             </div>
-          </div>}
+          </details>}
 
-          {data.evidence.length === 0 && reviewSnippets.length > 0 && (
-            <div className="review-group">
-              <strong>Returned review sample</strong>
-              <p className="panel-note">
-                These snippets were returned, but no allergy-specific terms matched your selected allergens.
-              </p>
-              <div className="evidence-list compact">
-                {reviewSnippets.slice(0, 3).map((review) => (
-                  <article key={review.review_id} className="evidence-item neutral">
-                    <div className="evidence-item-header">
-                      <span>{review.author_name ?? "Review"}</span>
-                      <span>{review.rating ? `${review.rating.toFixed(1)}★` : review.relative_publish_time ?? "Review"}</span>
-                    </div>
-                    <p className="evidence-excerpt">{review.text}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
+          {allergyMode && data.evidence.length === 0 && reviewSnippets.length > 0 && (
+            <p className="google-signal-empty">No allergy-specific mentions found in the available Google review sample.</p>
           )}
         </div>
       )}

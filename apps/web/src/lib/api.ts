@@ -201,13 +201,14 @@ export async function submitCommunityReview(
     body: string;
     rating?: number | null;
     allergens?: AllergyTag[];
-    reviewer_id?: string | null;
   },
-): Promise<{ review: CommunityReview; points_awarded: number; points_requires_login: boolean }> {
+  accessToken: string,
+): Promise<{ review: CommunityReview; points_awarded: number; total_points: number }> {
   const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/community-reviews`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(payload),
   });
@@ -215,7 +216,7 @@ export async function submitCommunityReview(
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? "Review could not be saved.");
   }
-  return (await response.json()) as { review: CommunityReview; points_awarded: number; points_requires_login: boolean };
+  return (await response.json()) as { review: CommunityReview; points_awarded: number; total_points: number };
 }
 
 export async function askRestaurant(

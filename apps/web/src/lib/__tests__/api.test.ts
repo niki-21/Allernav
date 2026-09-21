@@ -255,6 +255,30 @@ test("Dubai-first and community review UI are wired", () => {
   assert.ok(panelSource.includes("submitCommunityReview"));
 });
 
+test("Google login gates review points while public browsing remains available", () => {
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  const panelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  const authSource = readFileSync(new URL("../../components/AuthProvider.tsx", import.meta.url), "utf8");
+
+  assert.ok(pageSource.includes("<AuthBar />"));
+  assert.equal(pageSource.includes("selectedAllergenSummary"), false);
+  assert.ok(authSource.includes('provider: "google"'));
+  assert.ok(panelSource.includes("Sign in with Google above the allergy filters"));
+  assert.equal(panelSource.includes("allernav_reviewer_id"), false);
+  assert.equal(panelSource.includes("demo point"), false);
+});
+
+test("menu and community views remove repeated cautions", () => {
+  const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("Menu labels use available text only."));
+  assert.equal(source.includes('metadata: "no selected allergen detected · verify prep"'), false);
+  assert.equal(source.includes('metadata: "preparation needs staff review"'), false);
+  assert.equal(source.includes("Returned review sample"), false);
+  assert.ok(source.includes("No allergy-specific mentions found in the available Google review sample."));
+  assert.ok(source.includes("isMenuDisplayArtifact"));
+  assert.ok(source.includes("allergens?$/i.test"));
+});
+
 test("TrustPanel exposes the fast and deep menu scan lifecycle", () => {
   const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
   assert.ok(source.includes('"Menu found · deeper scan running"'));

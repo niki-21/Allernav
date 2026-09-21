@@ -80,3 +80,26 @@ create table if not exists public.menu_document_pages (
 
 create unique index if not exists menu_document_pages_job_url_idx
   on public.menu_document_pages (job_id, document_url);
+
+create table if not exists public.community_reviews (
+  id uuid primary key,
+  place_id text not null,
+  reviewer_id text not null,
+  author_name text not null,
+  body text not null,
+  rating integer check (rating between 1 and 5),
+  allergens text[] not null default '{}',
+  helpful_count integer not null default 0 check (helpful_count >= 0),
+  points_awarded integer not null default 0 check (points_awarded >= 0),
+  verification_status text not null default 'signed_in'
+    check (verification_status in ('unverified', 'signed_in', 'verified_visit')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists community_reviews_place_created_idx
+  on public.community_reviews (place_id, created_at desc);
+
+create index if not exists community_reviews_reviewer_idx
+  on public.community_reviews (reviewer_id, created_at desc);
+
+alter table public.community_reviews enable row level security;

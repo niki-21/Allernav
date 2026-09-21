@@ -317,12 +317,15 @@ test("community reviews can be saved with local fallback points", async () => {
     body: "Staff checked fish and soy ingredients and explained prep clearly.",
     rating: 5,
     allergens: ["fish", "soy"],
-    reviewer_id: "demo-reviewer",
+  }, {
+    id: "demo-reviewer",
+    email: "niki@example.com",
+    name: "Nikita",
   });
   const reviews = await getCommunityReviews("dubai-place");
 
   assert.equal(result.points_awarded, 12);
-  assert.equal(result.points_requires_login, false);
+  assert.equal(result.total_points, 12);
   assert.equal(reviews[0]?.body, "Staff checked fish and soy ingredients and explained prep clearly.");
   assert.deepEqual(reviews[0]?.allergens, ["fish", "soy"]);
 });

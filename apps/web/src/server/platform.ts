@@ -12,6 +12,65 @@ function supabaseRestConfig(): { url: string; serviceRoleKey: string } | null {
   return { url, serviceRoleKey: key };
 }
 
+export interface AuthenticatedReviewer {
+  id: string;
+  email: string | null;
+  name: string;
+}
+
+export async function getAuthenticatedReviewer(accessToken: string | null): Promise<AuthenticatedReviewer | null> {
+  const config = supabaseRestConfig();
+  if (!config || !accessToken) {
+    return null;
+  }
+  const response = await fetch(`${config.url}/auth/v1/user`, {
+    headers: {
+      apikey: config.serviceRoleKey,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json()) as Record<string, unknown>;
+  if (typeof payload.id !== "string") {
+    return null;
+  }
+  const metadata = payload.user_metadata && typeof payload.user_metadata === "object"
+    ? payload.user_metadata as Record<string, unknown>
+    : {};
+  const email = typeof payload.email === "string" ? payload.email : null;
+  const metadataName = typeof metadata.full_name === "string"
+    ? metadata.full_name
+    : typeof metadata.name === "string"
+      ? metadata.name
+      : null;
+  return {
+    id: payload.id,
+    email,
+    name: metadataName?.trim() || email?.split("@")[0] || "AllerNav diner",
+  };
+}
+
+export async function getReviewerPoints(reviewerId: string): Promise<number> {
+  const query = new URLSearchParams({
+    reviewer_id: `eq.${reviewerId}`,
+    select: "points_awarded",
+  });
+  const payload = await supabaseRequest(`/rest/v1/community_reviews?${query.toString()}`, { method: "GET" });
+  if (!Array.isArray(payload)) {
+    return 0;
+  }
+  return payload.reduce((total, row) => {
+    if (!row || typeof row !== "object") {
+      return total;
+    }
+    const points = (row as Record<string, unknown>).points_awarded;
+    return total + (typeof points === "number" ? points : 0);
+  }, 0);
+}
+
 async function supabaseRequest(path: string, init: RequestInit): Promise<unknown | null> {
   const config = supabaseRestConfig();
   if (!config) {
@@ -101,9 +160,9 @@ export async function saveCommunityReview(
     body?: unknown;
     rating?: unknown;
     allergens?: unknown;
-    reviewer_id?: unknown;
   },
-): Promise<{ review: CommunityReview; points_awarded: number; points_requires_login: boolean; persisted: boolean }> {
+  reviewer: AuthenticatedReviewer,
+): Promise<{ review: CommunityReview; points_awarded: number; total_points: number; persisted: boolean }> {
   const authorName = typeof payload.author_name === "string" && payload.author_name.trim()
     ? payload.author_name.trim().slice(0, 80)
     : "AllerNav diner";
@@ -117,21 +176,19 @@ export async function saveCommunityReview(
   const allergens = Array.isArray(payload.allergens)
     ? (payload.allergens.filter((item): item is AllergyTag => typeof item === "string") as AllergyTag[])
     : [];
-  const reviewerId = typeof payload.reviewer_id === "string" && payload.reviewer_id.trim()
-    ? payload.reviewer_id.trim()
-    : null;
-  const pointsAwarded = reviewerId ? 10 + Math.min(5, allergens.length) : 0;
+  const reviewerId = reviewer.id;
+  const pointsAwarded = 10 + Math.min(5, allergens.length);
   const createdAt = new Date().toISOString();
   const review: CommunityReview = {
     id: crypto.randomUUID(),
-    author_name: authorName,
+    author_name: authorName || reviewer.name,
     body,
     rating,
     allergens,
     helpful_count: 0,
     points_awarded: pointsAwarded,
     created_at: createdAt,
-    verification_status: reviewerId ? "signed_in" : "unverified",
+    verification_status: "signed_in",
   };
   const row = {
     ...review,
@@ -148,7 +205,7 @@ export async function saveCommunityReview(
     return {
       review: savedReview,
       points_awarded: savedReview.points_awarded ?? pointsAwarded,
-      points_requires_login: !reviewerId,
+      total_points: await getReviewerPoints(reviewerId),
       persisted: true,
     };
   }
@@ -156,7 +213,9 @@ export async function saveCommunityReview(
   return {
     review,
     points_awarded: pointsAwarded,
-    points_requires_login: !reviewerId,
+    total_points: fallbackReviews(placeId)
+      .filter((item) => item.verification_status === "signed_in")
+      .reduce((total, item) => total + (item.points_awarded ?? 0), 0),
     persisted: false,
   };
 }

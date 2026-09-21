@@ -1674,6 +1674,8 @@ def looks_like_real_menu_item(name: str, description: str | None = None) -> bool
         return False
     if re.search(r"privacy|copyright|newsletter|instagram|facebook|careers|gift card", normalized):
         return False
+    if re.fullmatch(r"(?:aed|usd|eur|gbp)?\s*\d+(?:\.\d+)?\s+allergens?", normalized.strip()):
+        return False
     if looks_like_schedule_or_event_text(name, description):
         return False
     if looks_like_non_dish_marketing_text(name, description):

@@ -211,6 +211,18 @@ curl "http://localhost:8000/api/debug/storage"
 
 The response separately reports whether the environment is configured, menu records can be read, and refresh jobs can be inserted. `SUPABASE_URL` may be either the project URL or its `/rest/v1` endpoint; AllerNav normalizes both forms. PostgREST code `PGRST125` means the request used an invalid API path. An undefined-table error instead means the checked-in Supabase migration still needs to be applied.
 
+### Google login and community points
+
+AllerNav browsing and menu scans remain public. Posting a community allergy review requires a Supabase account so review points can be tied to one reviewer and totaled across submissions.
+
+1. Run `apps/api/supabase.sql` in the Supabase SQL editor to create `community_reviews`.
+2. In Supabase, open **Authentication > Providers > Google**, enable Google, and add the Google OAuth client ID and secret.
+3. Add the Supabase callback URL shown on that provider screen to the Google Cloud OAuth client's authorized redirect URIs.
+4. In **Authentication > URL Configuration**, add the local and deployed app URLs, including `http://localhost:3000` and `https://allernav.vercel.app`.
+5. Set these on the `allernav` Vercel project: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and server-only `SUPABASE_SERVICE_ROLE_KEY`.
+
+Never prefix the service-role key with `NEXT_PUBLIC_` or expose it to browser code.
+
 Interactive refreshes use one overall time budget so blocked pages cannot starve later fallbacks. If menu candidates are found but extraction exceeds that budget, the trace reports `needs_background_refresh` instead of treating the source as absent.
 
 ```bash

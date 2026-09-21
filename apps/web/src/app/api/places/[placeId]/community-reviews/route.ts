@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getCommunityReviews, saveCommunityReview } from "../../../../../server/platform.ts";
+import { getAuthenticatedReviewer, getCommunityReviews, saveCommunityReview } from "../../../../../server/platform.ts";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,13 @@ export async function GET(_request: Request, context: { params: Promise<{ placeI
 export async function POST(request: Request, context: { params: Promise<{ placeId: string }> }) {
   const { placeId } = await context.params;
   try {
-    const result = await saveCommunityReview(placeId, await request.json());
+    const accessToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? null;
+    const reviewer = await getAuthenticatedReviewer(accessToken);
+    if (!reviewer) {
+      return NextResponse.json({ error: "Sign in with Google to post a review and earn points." }, { status: 401 });
+    }
+    const payload = await request.json();
+    const result = await saveCommunityReview(placeId, { ...payload, author_name: reviewer.name }, reviewer);
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return NextResponse.json(

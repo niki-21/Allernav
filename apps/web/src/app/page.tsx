@@ -3,6 +3,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AllergyProfilePicker from "@/components/AllergyProfilePicker";
+import AuthBar from "@/components/AuthBar";
 import Map from "@/components/Map";
 import PlaceCard from "@/components/PlaceCard";
 import SearchBar from "@/components/searchBar";
@@ -328,15 +329,6 @@ export default function Home() {
     [mapCenter.lat, mapCenter.lng, places, query, selectedAllergens, selectedPlaceId],
   );
   const canSearchArea = useMemo(() => shouldShowSearchAreaButton(searchCenter, mapCenter), [mapCenter, searchCenter]);
-  const selectedAllergenSummary = useMemo(
-    () =>
-      selectedAllergens
-        .map((allergen) => allergen.replace("_", " "))
-        .map((allergen) => allergen.charAt(0).toUpperCase() + allergen.slice(1))
-        .join(", "),
-    [selectedAllergens],
-  );
-
   useEffect(() => {
     if (nearbyContextRef.current !== null && nearbyContextRef.current !== nearbyContextKey) {
       resetNearbyRag();
@@ -826,10 +818,10 @@ export default function Home() {
 
       <div className="side-panels">
         <section className="glass-panel results-panel map-drawer">
+          <AuthBar />
           <details className="drawer-filter" open>
             <summary>
               <span>Allergies</span>
-              <strong>{selectedAllergenSummary || "No allergies selected"}</strong>
             </summary>
             <AllergyProfilePicker selectedAllergens={selectedAllergens} onToggle={toggleAllergen} />
           </details>

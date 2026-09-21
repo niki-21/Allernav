@@ -2457,6 +2457,67 @@ body {
   inset: 122px 24px 24px;
 }
 
+.auth-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(60, 64, 67, 0.12);
+  background: #ffffff;
+}
+
+.auth-user-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.auth-user-copy strong,
+.auth-user-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-user-copy strong {
+  color: #202124;
+  font-size: 0.88rem;
+}
+
+.auth-user-copy span {
+  color: #5f6368;
+  font-size: 0.75rem;
+}
+
+.auth-bar button,
+.google-sign-in-inline {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid rgba(60, 64, 67, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1a73e8;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.auth-bar button:disabled {
+  color: #9aa0a6;
+  cursor: not-allowed;
+}
+
+.auth-bar > p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b3261e;
+  font-size: 0.75rem;
+}
+
 .drawer-filter summary {
   padding: 16px 18px 10px;
 }
@@ -2572,8 +2633,41 @@ body {
 
 .community-form-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 118px;
+  grid-template-columns: 118px;
   gap: 9px;
+}
+
+.community-account-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  color: #5f6368;
+  font-size: 0.82rem;
+}
+
+.menu-allergy-disclaimer,
+.google-signal-empty {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(60, 64, 67, 0.12);
+  border-radius: 8px;
+  background: #f8f9fa;
+  color: #5f6368;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.google-signal-details {
+  padding-top: 4px;
+  border-top: 1px solid rgba(60, 64, 67, 0.1);
+}
+
+.google-signal-details > summary {
+  color: #3c4043;
+  font-size: 0.86rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .community-review-form label {
