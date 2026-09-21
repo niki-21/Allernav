@@ -240,6 +240,21 @@ test("TrustPanel keeps Overview and Menu restaurant fit messaging consistent", (
   assert.ok(source.includes("Some dishes contain your allergens, but many menu items may be possible lower-risk after staff verification."));
 });
 
+test("Dubai-first and community review UI are wired", () => {
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf8");
+  const mapSource = readFileSync(new URL("../../components/Map.tsx", import.meta.url), "utf8");
+  const panelSource = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
+
+  assert.ok(pageSource.includes("lat: 25.2048"));
+  assert.ok(pageSource.includes("lng: 55.2708"));
+  assert.ok(mapSource.includes("lat: 25.2048"));
+  assert.ok(panelSource.includes('type PlaceTab = "summary" | "menu" | "community"'));
+  assert.equal(panelSource.includes('"overview", "menu", "reviews", "about"'), false);
+  assert.ok(panelSource.includes("displayRestaurantFitLabel"));
+  assert.ok(panelSource.includes("Google reviews remain read-only discovery context."));
+  assert.ok(panelSource.includes("submitCommunityReview"));
+});
+
 test("TrustPanel exposes the fast and deep menu scan lifecycle", () => {
   const source = readFileSync(new URL("../../components/TrustPanel.tsx", import.meta.url), "utf8");
   assert.ok(source.includes('"Menu found · deeper scan running"'));

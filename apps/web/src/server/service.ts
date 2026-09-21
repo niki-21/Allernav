@@ -4,10 +4,11 @@ import { buildDecisionBrief } from "./briefing.ts";
 import { fetchBackendPlaceMenu } from "./fastapi.ts";
 import { GooglePlacesClient, type GooglePlaceDetails, type GooglePlaceReview } from "./googlePlaces.ts";
 import { getLocalPlaceSnapshot } from "./localPlaceSnapshots.ts";
+import { getCommunityReviews } from "./platform.ts";
 import { recommendMenuItems } from "./recommendations.ts";
 import { analyzePlace } from "./scoring.ts";
 
-export const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
+export const DEFAULT_CENTER: LatLng = { lat: 25.2048, lng: 55.2708 };
 
 const ALLERGY_TAGS = new Set<AllergyTag>(ALLERGEN_OPTIONS.map((option) => option.value));
 
@@ -267,6 +268,7 @@ export async function getPlaceDetailsService(
   const evidenceReviewIds = new Set(evidence.map((item) => item.review_id));
   const prioritizedReviews = prioritizeReviewSnippets(mergedPlace.reviews, selectedAllergens, evidenceReviewIds);
   const storedMenu = await fetchBackendPlaceMenu(place.id, selectedAllergens);
+  const communityReviews = await getCommunityReviews(place.id);
   const menu = storedMenu ?? localSnapshot?.menu ?? null;
   const recommendedItems = selectedAllergens.length > 0
     ? await recommendMenuItems(place.name, selectedAllergens, menu, evidence)
@@ -337,6 +339,6 @@ export async function getPlaceDetailsService(
     decision_brief: decisionBrief,
     menu,
     recommended_items: recommendedItems,
-    community_reviews: [],
+    community_reviews: communityReviews,
   };
 }

@@ -239,6 +239,10 @@ export interface CommunityReview {
   id: string;
   author_name: string;
   body: string;
+  rating?: number | null;
+  allergens?: AllergyTag[];
+  helpful_count?: number;
+  points_awarded?: number;
   created_at: string;
   verification_status: "verified_visit" | "signed_in" | "unverified";
 }

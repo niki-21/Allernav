@@ -4,6 +4,7 @@ import test from "node:test";
 import { getPlaceDetailsService, searchPlacesService } from "../service.ts";
 import { normalizeApifyReviews } from "../apifyReviews.ts";
 import { normalizeBackendMenu } from "../fastapi.ts";
+import { getCommunityReviews, saveCommunityReview } from "../platform.ts";
 
 const fakeClient = {
   async searchPlaces(_query: string, center: { lat: number; lng: number }) {
@@ -65,6 +66,12 @@ test("searchPlacesService supports an empty allergy profile", async () => {
   );
   assert.deepEqual(response.allergens, []);
   assert.equal(response.places[0]?.id, "alpha");
+});
+
+test("searchPlacesService defaults to Dubai when no center is provided", async () => {
+  const response = await searchPlacesService({ query: "restaurants", allergens: [] }, fakeClient);
+  assert.equal(response.center.lat, 25.2048);
+  assert.equal(response.center.lng, 55.2708);
 });
 
 test("getPlaceDetailsService returns details, evidence, and explanation", async () => {
@@ -302,4 +309,20 @@ test("getPlaceDetailsService changes score by selected allergens when menu risk 
 
   assert.ok(dairyResponse.score_summary.fit_score > soySesameResponse.score_summary.fit_score);
   assert.equal(soySesameResponse.score_summary.fit_verdict, "high_risk");
+});
+
+test("community reviews can be saved with local fallback points", async () => {
+  const result = await saveCommunityReview("dubai-place", {
+    author_name: "Nikita",
+    body: "Staff checked fish and soy ingredients and explained prep clearly.",
+    rating: 5,
+    allergens: ["fish", "soy"],
+    reviewer_id: "demo-reviewer",
+  });
+  const reviews = await getCommunityReviews("dubai-place");
+
+  assert.equal(result.points_awarded, 12);
+  assert.equal(result.points_requires_login, false);
+  assert.equal(reviews[0]?.body, "Staff checked fish and soy ingredients and explained prep clearly.");
+  assert.deepEqual(reviews[0]?.allergens, ["fish", "soy"]);
 });

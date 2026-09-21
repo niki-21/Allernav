@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+
+import { fetchCommunityReviews, submitCommunityReview } from "@/lib/api";
 
 import type {
   AllergyTag,
   AskRestaurantResponse,
+  CommunityReview,
   MenuItem,
   MenuRefreshJob,
   PlaceDetailsResponse,
@@ -24,7 +27,7 @@ interface TrustPanelProps {
   onRefreshMenu: () => void;
 }
 
-type PlaceTab = "overview" | "menu" | "reviews" | "about";
+type PlaceTab = "summary" | "menu" | "community";
 type VerificationTone = "needs-check" | "possible" | "possible-weak" | "avoid" | "unknown";
 
 interface MenuVerification {
@@ -74,6 +77,14 @@ function displayHostName(url: string): string {
   } catch {
     return url;
   }
+}
+
+function displayRestaurantFitLabel(label: string): string {
+  return label.toLowerCase().includes("strong candidate") ? "Good candidate to ask about" : label;
+}
+
+function communityAllergenSummary(allergens: AllergyTag[] = []): string {
+  return allergens.length > 0 ? allergens.map(formatAllergen).join(", ") : "general dining note";
 }
 
 function formatExtractionMethod(value?: string | null): string | null {
@@ -171,12 +182,29 @@ export default function TrustPanel({
 }: TrustPanelProps) {
   const [tabState, setTabState] = useState<{ placeId: string | null; tab: PlaceTab }>({
     placeId: null,
-    tab: "overview",
+    tab: "summary",
   });
   const [expandedMenuGroups, setExpandedMenuGroups] = useState<{ placeId: string | null; keys: string[] }>({
     placeId: null,
     keys: [],
   });
+  const [communityReviews, setCommunityReviews] = useState<CommunityReview[]>([]);
+  const [reviewDraft, setReviewDraft] = useState({ author_name: "", body: "", rating: 5 });
+  const [reviewStatus, setReviewStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!detailState || detailState.status !== "ready") {
+      return;
+    }
+    const placeId = detailState.data.id;
+    setCommunityReviews(detailState.data.community_reviews ?? []);
+    setReviewStatus("idle");
+    setReviewMessage(null);
+    void fetchCommunityReviews(placeId)
+      .then((reviews) => setCommunityReviews(reviews))
+      .catch(() => undefined);
+  }, [detailState]);
 
   if (!place) {
     return (
@@ -216,7 +244,7 @@ export default function TrustPanel({
   }
 
   const { data } = detailState;
-  const activeTab = tabState.placeId === data.id ? tabState.tab : "overview";
+  const activeTab = tabState.placeId === data.id ? tabState.tab : "summary";
   const menuSections = data.menu?.sections ?? [];
   const menuItemCount = menuSections.reduce((count, section) => count + section.items.length, 0);
   const allergyMode = data.selected_allergens.length > 0;
@@ -272,6 +300,7 @@ export default function TrustPanel({
   const restaurantFitScore = data.menu?.restaurant_fit_score ?? data.restaurant_fit_score ?? null;
   const restaurantFitLabel =
     data.menu?.restaurant_fit_label ?? data.restaurant_fit_label ?? (menuItemCount > 0 ? "Needs verification" : "Menu scan needed");
+  const visibleRestaurantFitLabel = displayRestaurantFitLabel(restaurantFitLabel);
   const restaurantFitReason = data.menu?.restaurant_fit_reason ?? data.restaurant_fit_reason ?? null;
   const hasRestaurantFit = allergyMode && menuItemCount > 0 && restaurantFitScore != null;
   const restaurantFitTone = (restaurantFitScore ?? 0) >= 70 ? "good" : (restaurantFitScore ?? 0) >= 45 ? "caution" : "risk";
@@ -282,6 +311,12 @@ export default function TrustPanel({
         ? "Several menu items may be possible lower-risk after staff verification."
         : "The current menu evidence still needs careful staff verification.");
   const reviewSnippets = data.review_snippets ?? [];
+  const communityReviewCount = communityReviews.length;
+  const communityRatingAverage =
+    communityReviews.length > 0
+      ? communityReviews.reduce((sum, review) => sum + (review.rating ?? 0), 0) /
+        Math.max(1, communityReviews.filter((review) => typeof review.rating === "number").length)
+      : null;
   const reviewSource = data.review_source_summary;
   const reviewSignalCount = data.evidence.length;
   const signalSource =
@@ -363,6 +398,36 @@ export default function TrustPanel({
   ].filter(Boolean).join(" · ");
   const generalMatchLabel = (data.rating ?? 0) >= 4.5 ? "Popular nearby option" : "Restaurant match";
 
+  const handleCommunityReviewSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setReviewStatus("saving");
+    setReviewMessage(null);
+    try {
+      const reviewerStorageKey = "allernav_reviewer_id";
+      let reviewerId = window.localStorage.getItem(reviewerStorageKey);
+      if (!reviewerId) {
+        reviewerId = crypto.randomUUID();
+        window.localStorage.setItem(reviewerStorageKey, reviewerId);
+      }
+      const result = await submitCommunityReview(data.id, {
+        ...reviewDraft,
+        allergens: data.selected_allergens,
+        reviewer_id: reviewerId,
+      });
+      setCommunityReviews((current) => [result.review, ...current.filter((review) => review.id !== result.review.id)]);
+      setReviewDraft({ author_name: reviewDraft.author_name, body: "", rating: reviewDraft.rating });
+      setReviewStatus("saved");
+      setReviewMessage(
+        result.points_awarded > 0
+          ? `Saved. ${result.points_awarded} demo point${result.points_awarded === 1 ? "" : "s"} added to this reviewer profile.`
+          : "Saved. Sign in support can attach points to a permanent account next.",
+      );
+    } catch (error) {
+      setReviewStatus("error");
+      setReviewMessage(error instanceof Error ? error.message : "Review could not be saved.");
+    }
+  };
+
   return (
     <div className="trust-panel-content">
       <div className="place-sheet-header">
@@ -372,7 +437,7 @@ export default function TrustPanel({
           {hasRestaurantFit && <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}</span>}
           {!allergyMode && data.rating != null && <span className="restaurant-rating-badge">{data.rating.toFixed(1)}★</span>}
         </div>
-        {hasRestaurantFit && <p className="restaurant-fit-label">{restaurantFitLabel}</p>}
+        {hasRestaurantFit && <p className="restaurant-fit-label">{visibleRestaurantFitLabel}</p>}
         {!allergyMode && <p className="restaurant-fit-label">{generalMatchLabel}</p>}
         <p>{data.address ?? "Address unavailable"}</p>
         {ratingLine && <p>{ratingLine}</p>}
@@ -390,7 +455,7 @@ export default function TrustPanel({
       </div>
 
       <div className="place-tabs" role="tablist" aria-label="Place information">
-        {(["overview", "menu", "reviews", "about"] as PlaceTab[]).map((tab) => (
+        {(["summary", "menu", "community"] as PlaceTab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -404,7 +469,7 @@ export default function TrustPanel({
         ))}
       </div>
 
-      {activeTab === "overview" && (
+      {activeTab === "summary" && (
         <div className="place-tab-panel">
           <div className="overview-line">
             <strong>{openStatus ?? data.decision_brief.headline}</strong>
@@ -425,7 +490,7 @@ export default function TrustPanel({
           )}
           {hasRestaurantFit && (
             <div className={`overview-line restaurant-fit-overview ${restaurantFitTone}`}>
-              <strong>{restaurantFitLabel}</strong>
+              <strong>{visibleRestaurantFitLabel}</strong>
               <p>{restaurantFitMessage}</p>
             </div>
           )}
@@ -439,18 +504,28 @@ export default function TrustPanel({
               {agentConfidencePercent !== null && <p>{agentConfidencePercent}% source confidence.</p>}
             </div>
           )}
-          {allergyMode && agentRecommendation && agentRecommendation.missing_information.length > 0 && (
-            <div className="overview-line">
-              <strong>Missing information</strong>
-              <p>{agentRecommendation.missing_information.slice(0, 2).join(" ")}</p>
-            </div>
-          )}
-          {allergyMode && agentRecommendation && agentRecommendation.recommended_questions.length > 0 && (
-            <div className="overview-line">
-              <strong>Questions for staff</strong>
-              <p>{agentRecommendation.recommended_questions.slice(0, 2).join(" ")}</p>
-            </div>
-          )}
+          <div className="overview-line compact-place-facts">
+            {data.address && (
+              <p>
+                <strong>Address</strong>
+                <span>{data.address}</span>
+              </p>
+            )}
+            {(data.national_phone_number || data.international_phone_number) && (
+              <p>
+                <strong>Phone</strong>
+                <span>{data.national_phone_number ?? data.international_phone_number}</span>
+              </p>
+            )}
+            {data.website_uri && (
+              <p>
+                <strong>Website</strong>
+                <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
+                  {displayHostName(data.website_uri)}
+                </a>
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -462,7 +537,7 @@ export default function TrustPanel({
               <div className="menu-fit-heading">
                 <strong>Restaurant allergy fit</strong>
                 <span className={`restaurant-fit-badge ${restaurantFitTone}`}>{restaurantFitScore}</span>
-                <b>{restaurantFitLabel}</b>
+                <b>{visibleRestaurantFitLabel}</b>
               </div>
               <p>
                 {menuBucketCounts.possible} possible · {menuBucketCounts.check} check · {menuBucketCounts.avoid} avoid
@@ -676,16 +751,85 @@ export default function TrustPanel({
         </div>
       )}
 
-      {activeTab === "reviews" && (
+      {activeTab === "community" && (
         <div className="place-tab-panel">
-          {allergyMode && <p className="panel-note">{signalSource}</p>}
-          <p className="panel-note">{reviewSourceLine}</p>
+          <div className="community-summary-card">
+            <strong>AllerNav community</strong>
+            <p>
+              {communityReviewCount > 0
+                ? `${communityReviewCount} allergy review${communityReviewCount === 1 ? "" : "s"} from AllerNav diners${
+                    communityRatingAverage ? ` · ${communityRatingAverage.toFixed(1)} average` : ""
+                  }.`
+                : "No AllerNav allergy comments for this restaurant yet."}
+            </p>
+            <small>Posting is inside AllerNav. Google reviews remain read-only discovery context.</small>
+          </div>
+
+          <form className="community-review-form" onSubmit={handleCommunityReviewSubmit}>
+            <div className="community-form-row">
+              <label>
+                Name
+                <input
+                  value={reviewDraft.author_name}
+                  onChange={(event) => setReviewDraft((current) => ({ ...current, author_name: event.target.value }))}
+                  placeholder="Your name"
+                />
+              </label>
+              <label>
+                Rating
+                <select
+                  value={reviewDraft.rating}
+                  onChange={(event) => setReviewDraft((current) => ({ ...current, rating: Number(event.target.value) }))}
+                >
+                  {[5, 4, 3, 2, 1].map((rating) => (
+                    <option key={rating} value={rating}>
+                      {rating} star{rating === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              Allergy comment
+              <textarea
+                value={reviewDraft.body}
+                onChange={(event) => setReviewDraft((current) => ({ ...current, body: event.target.value }))}
+                placeholder="What did staff confirm? Mention allergens, prep, substitutions, or cross-contact."
+                rows={4}
+              />
+            </label>
+            <div className="community-review-footer">
+              <small>Login will be used for permanent points; this demo ties points to a browser reviewer profile.</small>
+              <button type="submit" className="retry-button" disabled={reviewStatus === "saving"}>
+                {reviewStatus === "saving" ? "Saving..." : "Post review"}
+              </button>
+            </div>
+            {reviewMessage && <p className={`community-review-message ${reviewStatus}`}>{reviewMessage}</p>}
+          </form>
+
+          {communityReviews.length > 0 && (
+            <div className="review-group">
+              <strong>AllerNav reviews</strong>
+              <div className="evidence-list compact">
+                {communityReviews.slice(0, 6).map((review) => (
+                  <article key={review.id} className="community-review-item">
+                    <div className="evidence-item-header">
+                      <span>{review.author_name}</span>
+                      <span>{review.rating ? `${review.rating.toFixed(1)}★` : "Review"}</span>
+                    </div>
+                    <p className="evidence-excerpt">{review.body}</p>
+                    <p className="review-source-line">
+                      {communityAllergenSummary(review.allergens)} · {review.points_awarded ?? 0} points
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
 
           {allergyMode && <div className="review-group">
-            <strong>Allergy review signals</strong>
-            <p className="panel-note">
-              Reviews are warning context only. AllerNav does not use them to prove that a dish is lower risk.
-            </p>
+            <strong>Google allergy signals</strong>
+            <p className="panel-note">{signalSource}. {reviewSourceLine}</p>
             <div className="evidence-list compact">
               {data.evidence.length === 0 && (
                 <article className="evidence-item empty">
@@ -735,51 +879,6 @@ export default function TrustPanel({
         </div>
       )}
 
-      {activeTab === "about" && (
-        <div className="place-tab-panel">
-          {data.address && (
-            <div className="about-row">
-              <strong>Address</strong>
-              <p>{data.address}</p>
-            </div>
-          )}
-          {openStatus && (
-            <div className="about-row">
-              <strong>Hours</strong>
-              <p>{openStatus}</p>
-              {(data.current_opening_hours?.weekdayDescriptions ?? data.regular_opening_hours?.weekdayDescriptions ?? [])
-                .slice(0, 7)
-                .map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
-            </div>
-          )}
-          {(data.national_phone_number || data.international_phone_number) && (
-            <div className="about-row">
-              <strong>Phone</strong>
-              <p>{data.national_phone_number ?? data.international_phone_number}</p>
-            </div>
-          )}
-          {data.website_uri && (
-            <div className="about-row">
-              <strong>Website</strong>
-              <a className="source-link" href={data.website_uri} target="_blank" rel="noreferrer">
-                {displayHostName(data.website_uri)}
-              </a>
-            </div>
-          )}
-          <div className="about-row">
-            <strong>Verification note</strong>
-            <p>Use inferred information cautiously and verify ingredients, prep surfaces, and cross-contact before ordering.</p>
-          </div>
-          {agentRecommendation && (
-            <div className="about-row">
-              <strong>Agent trace</strong>
-              <p>{agentRecommendation.trace.nodes.join(" -> ")}</p>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

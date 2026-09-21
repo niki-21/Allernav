@@ -37,7 +37,7 @@ import type {
   PlaceSummary,
 } from "@/lib/types";
 
-const DEFAULT_CENTER: LatLng = { lat: 40.741895, lng: -73.989308 };
+const DEFAULT_CENTER: LatLng = { lat: 25.2048, lng: 55.2708 };
 const DEFAULT_QUERY = "";
 
 function nearbyEvidenceStatus(status: string): string {

@@ -2,6 +2,7 @@ import type {
   AgentRecommendationResult,
   AllergyTag,
   AskRestaurantResponse,
+  CommunityReview,
   LatLng,
   MenuRefreshJob,
   NearbySuggestionResponse,
@@ -180,6 +181,41 @@ export async function refreshPlaceReviews(placeId: string): Promise<ReviewRefres
     throw new Error(await response.text());
   }
   return (await response.json()) as ReviewRefreshJob;
+}
+
+export async function fetchCommunityReviews(placeId: string): Promise<CommunityReview[]> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/community-reviews`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Community reviews are temporarily unavailable.");
+  }
+  const body = (await response.json()) as { reviews?: CommunityReview[] };
+  return Array.isArray(body.reviews) ? body.reviews : [];
+}
+
+export async function submitCommunityReview(
+  placeId: string,
+  payload: {
+    author_name: string;
+    body: string;
+    rating?: number | null;
+    allergens?: AllergyTag[];
+    reviewer_id?: string | null;
+  },
+): Promise<{ review: CommunityReview; points_awarded: number; points_requires_login: boolean }> {
+  const response = await fetch(`${API_PREFIX}/places/${encodeURIComponent(placeId)}/community-reviews`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Review could not be saved.");
+  }
+  return (await response.json()) as { review: CommunityReview; points_awarded: number; points_requires_login: boolean };
 }
 
 export async function askRestaurant(

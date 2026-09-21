@@ -17,7 +17,7 @@ interface MapProps {
   onMapCenterChange: (center: LatLng) => void;
 }
 
-const DEFAULT_CENTER = { lat: 40.741895, lng: -73.989308 };
+const DEFAULT_CENTER = { lat: 25.2048, lng: 55.2708 };
 
 const MAP_STYLES: google.maps.MapTypeStyle[] = [
   { featureType: "administrative", elementType: "labels.text.fill", stylers: [{ color: "#6d635d" }] },
